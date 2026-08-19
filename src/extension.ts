@@ -64,7 +64,7 @@ class ViceConfigurationProvider implements vscode.DebugConfigurationProvider {
 			{
 				type: 'vice',
 				request: 'launch',
-				name: 'VICE: Launch & Debug',
+				name: 'VICE: Launch & Debug (C64)',
 				viceExecutable: 'x64sc',
 				program: '${workspaceFolder}/main.prg',
 				stopOnDebug: true
@@ -76,26 +76,35 @@ class ViceConfigurationProvider implements vscode.DebugConfigurationProvider {
 	 * Massage a debug configuration just before a debug session is being launched.
 	 */
 	resolveDebugConfiguration(
-		_folder: vscode.WorkspaceFolder | undefined,
+		folder: vscode.WorkspaceFolder | undefined,
 		config: vscode.DebugConfiguration,
 		_token?: vscode.CancellationToken
 	): vscode.ProviderResult<vscode.DebugConfiguration> {
 		// If launch.json is missing or empty
 		if (!config.type && !config.request && !config.name) {
 			config.type = 'vice';
-			config.name = 'VICE: Launch & Debug';
+			config.name = 'VICE: Launch & Debug (C64)';
 			config.request = 'launch';
 			config.program = '${file}';
 			config.viceExecutable = 'x64sc';
 			config.stopOnDebug = true;
 		}
 
-		if (config.viceExecutable === undefined) {
+		if (!config.viceExecutable) {
 			config.viceExecutable = 'x64sc';
 		}
 
 		if (config.stopOnDebug === undefined) {
 			config.stopOnDebug = true;
+		}
+
+		// Read VICE installation directory from VS Code workspace settings if not explicitly provided
+		if (!config.viceDirectory) {
+			const viceConfig = vscode.workspace.getConfiguration('vice', folder?.uri);
+			const installDir = viceConfig.get<string>('installationDirectory');
+			if (installDir && installDir.trim().length > 0) {
+				config.viceDirectory = installDir.trim();
+			}
 		}
 
 		return config;

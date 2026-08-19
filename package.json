@@ -21,6 +21,17 @@
     "onCommand:extension.vice-debugger.createLaunchJson"
   ],
   "contributes": {
+    "configuration": {
+      "title": "VICE Debugger",
+      "properties": {
+        "vice.installationDirectory": {
+          "type": "string",
+          "default": "C:\\Users\\Brad\\Downloads\\GTK3VICE-3.10-win64",
+          "description": "The installation directory of the VICE software package (without the bin subfolder). For example: C:\\Program Files\\VICE or C:\\VICE",
+          "scope": "resource"
+        }
+      }
+    },
     "commands": [
       {
         "command": "extension.vice-debugger.createLaunchJson",
@@ -92,6 +103,18 @@
                 "type": "number",
                 "description": "Port where VICE binary monitor is listening.",
                 "default": 6510
+              },
+              "viceDirectory": {
+                "type": "string",
+                "description": "Optional override for the VICE installation directory (without the bin subfolder). Defaults to the vice.installationDirectory setting."
+              },
+              "viceArgs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Additional command line arguments to pass to the VICE emulator.",
+                "default": []
               }
             }
           },
