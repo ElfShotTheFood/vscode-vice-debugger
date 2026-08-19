@@ -37,7 +37,7 @@ export class ViceDebugSession extends LoggingDebugSession {
 	private _launcher: ViceProcessLauncher;
 	private _variableHandles = new Handles<string>();
 	private _stopOnDebug = true;
-	private _entryAddress = 0x080d;
+	private _loadAddress = 0x0801;
 	private _waitingForEntry = false;
 	private _currentRegisters: IViceRegisters | null = null;
 	private _currentPc = 0x080d;
@@ -113,35 +113,8 @@ export class ViceDebugSession extends LoggingDebugSession {
 		response: DebugProtocol.ConfigurationDoneResponse,
 		_args: DebugProtocol.ConfigurationDoneArguments
 	): Promise<void> {
+		this.sendEvent(new OutputEvent('[VICE Debugger] ConfigurationDone received from VS Code.\n', 'console'));
 		this.sendResponse(response);
-
-		if (this._monitor.isConnected) {
-			if (this._stopOnDebug) {
-				try {
-					this._waitingForEntry = true;
-					const entryHex = `$${this._entryAddress.toString(16).padStart(4, '0').toUpperCase()}`;
-					this.sendEvent(new OutputEvent(`[VICE Debugger] Requesting one-shot entry breakpoint at ${entryHex}...\n`, 'console'));
-
-					const cpId = await this._monitor.setCheckpoint(this._entryAddress, true, true, 0);
-					this.sendEvent(new OutputEvent(`[VICE Debugger] Checkpoint established: Checkpoint ID #${cpId} at ${entryHex}\n`, 'console'));
-				} catch (err: any) {
-					this.sendEvent(new OutputEvent(`[VICE Debugger ERROR] Failed to set entry checkpoint: ${err?.message || err}\n`, 'stderr'));
-				}
-
-				// Exit monitor to let VICE boot and hit breakpoint
-				try {
-					this.sendEvent(new OutputEvent('[VICE Debugger] Resuming VICE emulation to run until entry breakpoint...\n', 'console'));
-					await this._monitor.exitMonitor();
-				} catch (err: any) {
-					this.sendEvent(new OutputEvent(`[VICE Debugger] Exit monitor command status: ${err?.message || err}\n`, 'console'));
-				}
-			} else {
-				try {
-					this.sendEvent(new OutputEvent('[VICE Debugger] Resuming VICE emulation (stopOnDebug=false)...\n', 'console'));
-					await this._monitor.exitMonitor();
-				} catch {}
-			}
-		}
 	}
 
 	protected async launchRequest(
@@ -161,16 +134,16 @@ export class ViceDebugSession extends LoggingDebugSession {
 			this.sendEvent(new OutputEvent(`[VICE Debugger] Inspecting program: "${args.program}"\n`, 'console'));
 			const prgInfo = parsePrgHeader(args.program);
 			if (prgInfo) {
-				this._entryAddress = prgInfo.entryAddress;
+				this._loadAddress = prgInfo.loadAddress;
 				const loadHex = `$${prgInfo.loadAddress.toString(16).padStart(4, '0').toUpperCase()}`;
 				const entryHex = `$${prgInfo.entryAddress.toString(16).padStart(4, '0').toUpperCase()}`;
 				this.sendEvent(new OutputEvent(`[VICE Debugger] PRG Analysis: Load=${loadHex}, Entry=${entryHex}, HasBasicStub=${prgInfo.hasBasicStub}\n[VICE Debugger] Details: ${prgInfo.details}\n`, 'console'));
 			} else {
-				this._entryAddress = 0x080d;
+				this._loadAddress = 0x0801;
 				this.sendEvent(new OutputEvent('[VICE Debugger Warning] Could not parse PRG header, defaulting entry to $080D.\n', 'console'));
 			}
 		} else {
-			this._entryAddress = 0x080d;
+			this._loadAddress = 0x0801;
 			this.sendEvent(new OutputEvent('[VICE Debugger Warning] No program specified, defaulting entry to $080D.\n', 'console'));
 		}
 
@@ -191,6 +164,27 @@ export class ViceDebugSession extends LoggingDebugSession {
 			// Connect to binary monitor
 			await this._monitor.connect(host, port, 12000, 500);
 			this.sendEvent(new OutputEvent('[VICE Debugger] Connected to VICE Binary Monitor.\n', 'console'));
+
+			if (!args.program) {
+				throw new Error('A PRG program path is required for launch.');
+			}
+
+			// Load without running, establish the checkpoint, then load/run again.
+			// VICE is not started with -autostart, so user code cannot run before
+			// the monitor has installed the entry checkpoint.
+			this.sendEvent(new OutputEvent('[VICE Debugger] Loading PRG without running...\n', 'console'));
+			await this._monitor.autostart(args.program, false);
+
+			if (this._stopOnDebug) {
+				this._waitingForEntry = true;
+				const loadHex = `$${this._loadAddress.toString(16).padStart(4, '0').toUpperCase()}`;
+				this.sendEvent(new OutputEvent(`[VICE Debugger] Establishing load-address checkpoint at ${loadHex} before execution...\n`, 'console'));
+				const cpId = await this._monitor.setCheckpoint(this._loadAddress, true, true);
+				this.sendEvent(new OutputEvent(`[VICE Debugger] Checkpoint #${cpId} established at ${loadHex}\n`, 'console'));
+			}
+
+			this.sendEvent(new OutputEvent('[VICE Debugger] Starting PRG execution...\n', 'console'));
+			await this._monitor.autostart(args.program, true);
 
 			this.sendResponse(response);
 		} catch (err: any) {

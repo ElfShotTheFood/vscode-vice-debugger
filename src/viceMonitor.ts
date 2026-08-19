@@ -7,70 +7,70 @@ import { EventEmitter } from 'events';
 export const VICE_MONITOR_COMMAND = {
 	MEMORY_GET: 0x01,
 	MEMORY_SET: 0x02,
-	REGISTERS_GET: 0x11,
-	REGISTERS_SET: 0x12,
-	CHECKPOINT_SET: 0x21,
-	CHECKPOINT_GET: 0x22,
-	CHECKPOINT_DELETE: 0x23,
-	CHECKPOINT_LIST: 0x24,
-	CHECKPOINT_TOGGLE: 0x25,
-	CONDITION_SET: 0x31,
-	REGISTERS_AVAILABLE: 0x41,
-	DUMP: 0x51,
-	UNDUMP: 0x52,
-	RESOURCE_GET: 0x61,
-	RESOURCE_SET: 0x62,
+	CHECKPOINT_GET: 0x11,
+	CHECKPOINT_SET: 0x12,
+	CHECKPOINT_DELETE: 0x13,
+	CHECKPOINT_LIST: 0x14,
+	CHECKPOINT_TOGGLE: 0x15,
+	CONDITION_SET: 0x22,
+	REGISTERS_GET: 0x31,
+	REGISTERS_SET: 0x32,
+	DUMP: 0x41,
+	UNDUMP: 0x42,
+	RESOURCE_GET: 0x51,
+	RESOURCE_SET: 0x52,
 	ADVANCE_INSTRUCTION: 0x71,
 	KEYBOARD_FEED: 0x72,
 	EXECUTE_UNTIL_RETURN: 0x73,
 	PING: 0x81,
-	BANKS_AVAILABLE: 0xaa,
+	BANKS_AVAILABLE: 0x82,
+	REGISTERS_AVAILABLE: 0x83,
 	EXIT_MONITOR: 0xaa,
-	QUIT: 0xfb,
-	RESET: 0xfc,
-	AUTOSTART: 0xfd,
+	QUIT: 0xbb,
+	RESET: 0xcc,
+	AUTOSTART: 0xdd,
 	// Response & Event codes
 	RESPONSE_OK: 0x00,
-	EVENT_JAM: 0xee,
-	EVENT_STOPPED: 0xef,
-	EVENT_RESUMED: 0xf1
+	EVENT_JAM: 0x61,
+	EVENT_STOPPED: 0x62,
+	EVENT_RESUMED: 0x63
 } as const;
 
 export function getCommandName(commandType: number): string {
 	switch (commandType) {
 		case 0x01: return 'MEMORY_GET (0x01)';
 		case 0x02: return 'MEMORY_SET (0x02)';
-		case 0x11: return 'REGISTERS_GET (0x11)';
-		case 0x12: return 'REGISTERS_SET (0x12)';
-		case 0x21: return 'CHECKPOINT_SET (0x21)';
-		case 0x22: return 'CHECKPOINT_GET (0x22)';
-		case 0x23: return 'CHECKPOINT_DELETE (0x23)';
-		case 0x24: return 'CHECKPOINT_LIST (0x24)';
-		case 0x25: return 'CHECKPOINT_TOGGLE (0x25)';
-		case 0x31: return 'CONDITION_SET (0x31)';
-		case 0x41: return 'REGISTERS_AVAILABLE (0x41)';
-		case 0x51: return 'DUMP (0x51)';
-		case 0x52: return 'UNDUMP (0x52)';
-		case 0x61: return 'RESOURCE_GET (0x61)';
-		case 0x62: return 'RESOURCE_SET (0x62)';
+		case 0x11: return 'CHECKPOINT_GET (0x11)';
+		case 0x12: return 'CHECKPOINT_SET (0x12)';
+		case 0x13: return 'CHECKPOINT_DELETE (0x13)';
+		case 0x14: return 'CHECKPOINT_LIST (0x14)';
+		case 0x15: return 'CHECKPOINT_TOGGLE (0x15)';
+		case 0x22: return 'CONDITION_SET (0x22)';
+		case 0x31: return 'REGISTERS_GET (0x31)';
+		case 0x32: return 'REGISTERS_SET (0x32)';
+		case 0x41: return 'DUMP (0x41)';
+		case 0x42: return 'UNDUMP (0x42)';
+		case 0x51: return 'RESOURCE_GET (0x51)';
+		case 0x52: return 'RESOURCE_SET (0x52)';
 		case 0x71: return 'ADVANCE_INSTRUCTION (0x71)';
 		case 0x72: return 'KEYBOARD_FEED (0x72)';
 		case 0x73: return 'EXECUTE_UNTIL_RETURN (0x73)';
 		case 0x81: return 'PING (0x81)';
-		case 0xaa: return 'BANKS_AVAILABLE/EXIT (0xAA)';
-		case 0xbb: return 'REGISTERS_AVAILABLE (0xBB)';
-		case 0xfb: return 'QUIT (0xFB)';
-		case 0xfc: return 'RESET (0xFC)';
-		case 0xfd: return 'AUTOSTART (0xFD)';
-		case 0xee: return 'EVENT_JAM (0xEE)';
-		case 0xef: return 'EVENT_STOPPED (0xEF)';
-		case 0xf1: return 'EVENT_RESUMED (0xF1)';
+		case 0x82: return 'BANKS_AVAILABLE (0x82)';
+		case 0x83: return 'REGISTERS_AVAILABLE (0x83)';
+		case 0xaa: return 'EXIT (0xAA)';
+		case 0xbb: return 'QUIT (0xBB)';
+		case 0xcc: return 'RESET (0xCC)';
+		case 0xdd: return 'AUTOSTART (0xDD)';
+		case 0x61: return 'EVENT_JAM (0x61)';
+		case 0x62: return 'EVENT_STOPPED (0x62)';
+		case 0x63: return 'EVENT_RESUMED (0x63)';
 		case 0x00: return 'RESPONSE_OK (0x00)';
 		default: return `UNKNOWN (0x${commandType.toString(16).padStart(2, '0').toUpperCase()})`;
 	}
 }
 
-export function bufferToHex(buf: Buffer, maxBytes = 32): string {
+export function bufferToHex(buf: Buffer, maxBytes = 64): string {
 	const slice = buf.subarray(0, maxBytes);
 	const hex = Array.from(slice).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
 	return buf.length > maxBytes ? `${hex} ... (${buf.length} bytes total)` : `${hex} (${buf.length} bytes)`;
@@ -183,17 +183,16 @@ export class ViceMonitorClient extends EventEmitter {
 		}
 
 		const reqId = this._requestId++;
-		if (this._requestId > 0x7fffffff) {
+		if (this._requestId > 0xffffffff) {
 			this._requestId = 1;
 		}
 
-		// Packet structure:
+		// Request Header (11 bytes for API Version 2):
 		// [0]: 0x02 (STX)
 		// [1]: 0x02 (API Version 2)
 		// [2..5]: Body Length (uint32 LE)
 		// [6..9]: Request ID (uint32 LE)
 		// [10]: Command Type (uint8)
-		// [11..]: Body
 		const header = Buffer.alloc(11);
 		header[0] = 0x02; // STX
 		header[1] = 0x02; // Version
@@ -203,7 +202,7 @@ export class ViceMonitorClient extends EventEmitter {
 
 		const packet = Buffer.concat([header, body]);
 
-		this._log(`[VICE Monitor TX] Req #${reqId} -> ${getCommandName(commandType)} | Body (${body.length}B): ${bufferToHex(body)}`);
+		this._log(`[VICE RAW OUT] Req #${reqId} (${getCommandName(commandType)}) Total ${packet.length}B: ${bufferToHex(packet, packet.length)}`);
 
 		return new Promise<IViceMonitorResponse>((resolve, reject) => {
 			const timeoutTimer = setTimeout(() => {
@@ -227,6 +226,20 @@ export class ViceMonitorClient extends EventEmitter {
 		await this.sendCommand(VICE_MONITOR_COMMAND.EXIT_MONITOR);
 	}
 
+	/** Load a PRG through VICE's binary-monitor AUTOSTART command and run it. */
+	public async autostart(programPath: string, run = true): Promise<void> {
+		const filename = Buffer.from(programPath, 'utf8');
+		if (filename.length > 255) {
+			throw new Error('VICE AUTOSTART filename is limited to 255 bytes.');
+		}
+		const body = Buffer.alloc(4 + filename.length);
+		body[0] = run ? 1 : 0;
+		body.writeUInt16LE(0, 1); // file index: normal filesystem path
+		body[3] = filename.length;
+		filename.copy(body, 4);
+		await this.sendCommand(VICE_MONITOR_COMMAND.AUTOSTART, body);
+	}
+
 	public async stepInstruction(stepOver = false): Promise<void> {
 		const body = Buffer.alloc(3);
 		body[0] = stepOver ? 0x01 : 0x00;
@@ -238,8 +251,8 @@ export class ViceMonitorClient extends EventEmitter {
 		await this.sendCommand(VICE_MONITOR_COMMAND.EXECUTE_UNTIL_RETURN);
 	}
 
-	public async setCheckpoint(address: number, stopWhenHit = true, isTemp = false, memspace = 0): Promise<number> {
-		// VICE CHECKPOINT_SET (0x21) Body:
+	public async setCheckpoint(address: number, stopWhenHit = true, isTemp = false): Promise<number> {
+		// VICE CHECKPOINT_SET body is exactly 9 bytes:
 		// 0..1: start_addr (uint16 LE)
 		// 2..3: end_addr (uint16 LE)
 		// 4: stop_when_hit (uint8)
@@ -254,7 +267,7 @@ export class ViceMonitorClient extends EventEmitter {
 		body[5] = 0x01; // enabled
 		body[6] = 0x01; // CPU Exec
 		body[7] = isTemp ? 0x01 : 0x00;
-		body[8] = memspace;
+		body[8] = 0x00; // memspace (main CPU)
 
 		const resp = await this.sendCommand(VICE_MONITOR_COMMAND.CHECKPOINT_SET, body);
 		if (resp.body.length >= 4) {
@@ -269,6 +282,16 @@ export class ViceMonitorClient extends EventEmitter {
 		const body = Buffer.alloc(4);
 		body.writeUInt32LE(checkpointId, 0);
 		await this.sendCommand(VICE_MONITOR_COMMAND.CHECKPOINT_DELETE, body);
+	}
+
+	public async listCheckpoints(): Promise<any[]> {
+		const resp = await this.sendCommand(VICE_MONITOR_COMMAND.CHECKPOINT_LIST);
+		const checkpoints: any[] = [];
+		if (resp.body.length >= 4) {
+			const count = resp.body.readUInt32LE(0);
+			this._log(`[VICE Monitor] Active checkpoints in VICE: ${count}`);
+		}
+		return checkpoints;
 	}
 
 	public async getRegisters(memspace = 0): Promise<IViceRegisters> {
@@ -329,9 +352,10 @@ export class ViceMonitorClient extends EventEmitter {
 	}
 
 	private _onDataReceived(chunk: Buffer): void {
+		this._log(`[VICE RAW IN] ${chunk.length} bytes: ${bufferToHex(chunk, chunk.length)}`);
 		this._receiveBuffer = Buffer.concat([this._receiveBuffer, chunk]);
 
-		while (this._receiveBuffer.length >= 11) {
+		while (this._receiveBuffer.length >= 12) {
 			if (this._receiveBuffer[0] !== 0x02) {
 				const nextStx = this._receiveBuffer.indexOf(0x02, 1);
 				if (nextStx === -1) {
@@ -339,50 +363,52 @@ export class ViceMonitorClient extends EventEmitter {
 					return;
 				}
 				this._receiveBuffer = this._receiveBuffer.subarray(nextStx);
-				if (this._receiveBuffer.length < 11) {
+				if (this._receiveBuffer.length < 12) {
 					return;
 				}
 			}
 
 			const bodyLength = this._receiveBuffer.readUInt32LE(2);
-			const totalPacketLength = 11 + bodyLength;
+			const responseType = this._receiveBuffer[6];
+			const errorCode = this._receiveBuffer[7];
+			const reqId = this._receiveBuffer.readUInt32LE(8);
+			const totalPacketLength = 12 + bodyLength;
 
 			if (this._receiveBuffer.length < totalPacketLength) {
 				return;
 			}
 
-			const reqId = this._receiveBuffer.readUInt32LE(6);
-			const commandType = this._receiveBuffer[10];
-			const fullBody = this._receiveBuffer.subarray(11, totalPacketLength);
-
+			const body = this._receiveBuffer.subarray(12, totalPacketLength);
 			this._receiveBuffer = this._receiveBuffer.subarray(totalPacketLength);
 
-			this._handlePacket(commandType, reqId, fullBody);
+			this._handlePacket(responseType, errorCode, reqId, body);
 		}
 	}
 
-	private _handlePacket(commandType: number, reqId: number, body: Buffer): void {
-		// Asynchronous Events from VICE
-		if (commandType === VICE_MONITOR_COMMAND.EVENT_STOPPED) {
+	private _handlePacket(responseType: number, errorCode: number, reqId: number, body: Buffer): void {
+		this._log(`[VICE Decoded Header] RespType=0x${responseType.toString(16).padStart(2, '0')} (${getCommandName(responseType)}), ErrorCode=0x${errorCode.toString(16).padStart(2, '0')}, ReqId=${reqId}, BodyLength=${body.length}`);
+
+			// Asynchronous events use request ID 0xffffffff.
+		if (responseType === VICE_MONITOR_COMMAND.EVENT_STOPPED) {
 			const pc = body.length >= 2 ? body.readUInt16LE(0) : 0;
 			const pcHex = `$${pc.toString(16).padStart(4, '0').toUpperCase()}`;
-			this._log(`[VICE Monitor EVENT] EVENT_STOPPED (0xEF) at PC=${pcHex} | Body (${body.length}B): ${bufferToHex(body)}`);
+			this._log(`[VICE Monitor EVENT] EVENT_STOPPED (0xEF) at PC=${pcHex}`);
 			this.emit('stopped', { pc });
 			return;
 		}
 
-		if (commandType === VICE_MONITOR_COMMAND.EVENT_RESUMED) {
+		if (responseType === VICE_MONITOR_COMMAND.EVENT_RESUMED) {
 			const pc = body.length >= 2 ? body.readUInt16LE(0) : 0;
 			const pcHex = `$${pc.toString(16).padStart(4, '0').toUpperCase()}`;
-			this._log(`[VICE Monitor EVENT] EVENT_RESUMED (0xF1) at PC=${pcHex} | Body (${body.length}B): ${bufferToHex(body)}`);
+			this._log(`[VICE Monitor EVENT] EVENT_RESUMED (0xF1) at PC=${pcHex}`);
 			this.emit('resumed', { pc });
 			return;
 		}
 
-		if (commandType === VICE_MONITOR_COMMAND.EVENT_JAM) {
+		if (responseType === VICE_MONITOR_COMMAND.EVENT_JAM) {
 			const pc = body.length >= 2 ? body.readUInt16LE(0) : 0;
 			const pcHex = `$${pc.toString(16).padStart(4, '0').toUpperCase()}`;
-			this._log(`[VICE Monitor EVENT] EVENT_JAM (0xEE) at PC=${pcHex} | Body (${body.length}B): ${bufferToHex(body)}`);
+			this._log(`[VICE Monitor EVENT] EVENT_JAM (0xEE) at PC=${pcHex}`);
 			this.emit('jam', { pc });
 			return;
 		}
@@ -393,19 +419,21 @@ export class ViceMonitorClient extends EventEmitter {
 			this._pendingRequests.delete(reqId);
 			clearTimeout(pending.timeoutTimer);
 
-			const errorCode = body.length > 0 ? body[0] : 0;
-			const payload = body.length > 1 ? body.subarray(1) : Buffer.alloc(0);
+			this._log(`[VICE Monitor RX] Req #${reqId} matched! ErrorCode=0x${errorCode.toString(16).padStart(2, '0')} | Payload (${body.length}B): ${bufferToHex(body)}`);
 
-			this._log(`[VICE Monitor RX] Req #${reqId} <- ${getCommandName(commandType)} | ErrorCode=0x${errorCode.toString(16).padStart(2, '0')} (${errorCode === 0 ? 'OK' : 'ERR'}) | Payload (${payload.length}B): ${bufferToHex(payload)}`);
+			if (errorCode !== 0) {
+				pending.reject(new Error(`VICE monitor command ${getCommandName(pending.commandType)} failed with error 0x${errorCode.toString(16).padStart(2, '0')}.`));
+				return;
+			}
 
 			pending.resolve({
 				requestId: reqId,
-				commandType,
+				commandType: pending.commandType,
 				errorCode,
-				body: payload
+				body
 			});
 		} else {
-			this._log(`[VICE Monitor RX] Uncorrelated Packet: Command=${getCommandName(commandType)}, Req #${reqId} | Body (${body.length}B): ${bufferToHex(body)}`);
+			this._log(`[VICE Monitor RX] Uncorrelated Packet: RespType=0x${responseType.toString(16).padStart(2, '0')}, Req #${reqId}`);
 		}
 	}
 
@@ -483,17 +511,11 @@ export class ViceProcessLauncher {
 			...(options.viceArgs || [])
 		];
 
-		if (options.program && options.program.trim().length > 0) {
-			const prog = options.program.trim();
-			if (fs.existsSync(prog)) {
-				// Use -autostart to ensure VICE loads and executes the PRG
-				args.push('-autostart', prog);
-			} else {
-				if (outputCallback) {
-					outputCallback(`[VICE Launcher Warning] Program file not found: "${prog}"\n`);
-				}
-				args.push(prog);
-			}
+		// Do not pass -autostart here. The debug session must first connect to
+		// the monitor and install its entry checkpoint. It invokes AUTOSTART
+		// explicitly after that checkpoint has been created.
+		if (options.program && !fs.existsSync(options.program.trim()) && outputCallback) {
+			outputCallback(`[VICE Launcher Warning] Program file not found: "${options.program.trim()}"\n`);
 		}
 
 		if (outputCallback) {
