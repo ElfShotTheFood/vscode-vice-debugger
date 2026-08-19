@@ -10,6 +10,7 @@ import {
 } from '@vscode/debugadapter';
 import { DebugProtocol } from '@vscode/debugprotocol';
 import { ViceMonitorClient, ViceProcessLauncher, IViceRegisters } from './viceMonitor';
+import { parsePrgHeader } from './prgReader';
 
 export interface IViceLaunchRequestArguments extends DebugProtocol.LaunchRequestArguments {
 	program?: string;
@@ -36,6 +37,8 @@ export class ViceDebugSession extends LoggingDebugSession {
 	private _launcher: ViceProcessLauncher;
 	private _variableHandles = new Handles<string>();
 	private _stopOnDebug = true;
+	private _entryAddress = 0x080d;
+	private _waitingForEntry = false;
 	private _currentRegisters: IViceRegisters | null = null;
 	private _currentPc = 0x080d;
 
@@ -47,26 +50,43 @@ export class ViceDebugSession extends LoggingDebugSession {
 		this._monitor = new ViceMonitorClient();
 		this._launcher = new ViceProcessLauncher();
 
+		// Stream all monitor communication to VS Code Debug Console
+		this._monitor.onLog = (msg: string) => {
+			this.sendEvent(new OutputEvent(msg, 'console'));
+		};
+
 		this._monitor.on('stopped', async ({ pc }) => {
 			this._currentPc = pc;
+			const pcHex = `$${pc.toString(16).padStart(4, '0').toUpperCase()}`;
+			this.sendEvent(new OutputEvent(`[VICE Debugger] Execution STOPPED at PC=${pcHex}\n`, 'console'));
+
 			try {
 				this._currentRegisters = await this._monitor.getRegisters();
-			} catch {}
-			this.sendEvent(new StoppedEvent('breakpoint', ViceDebugSession.THREAD_ID));
+				this._currentPc = this._currentRegisters.pc;
+			} catch (err: any) {
+				this.sendEvent(new OutputEvent(`[VICE Debugger] Error fetching registers on stop: ${err?.message || err}\n`, 'stderr'));
+			}
+
+			const reason = this._waitingForEntry ? 'entry' : 'breakpoint';
+			this._waitingForEntry = false;
+			this.sendEvent(new StoppedEvent(reason, ViceDebugSession.THREAD_ID));
 		});
 
 		this._monitor.on('resumed', ({ pc }) => {
 			this._currentPc = pc;
+			const pcHex = `$${pc.toString(16).padStart(4, '0').toUpperCase()}`;
+			this.sendEvent(new OutputEvent(`[VICE Debugger] Execution RESUMED from PC=${pcHex}\n`, 'console'));
 		});
 
 		this._monitor.on('jam', ({ pc }) => {
 			this._currentPc = pc;
-			this.sendEvent(new OutputEvent(`[VICE] CPU Jammed at PC: $${pc.toString(16).padStart(4, '0').toUpperCase()}\n`, 'stderr'));
+			const pcHex = `$${pc.toString(16).padStart(4, '0').toUpperCase()}`;
+			this.sendEvent(new OutputEvent(`[VICE Debugger] CPU JAMMED at PC=${pcHex}\n`, 'stderr'));
 			this.sendEvent(new StoppedEvent('exception', ViceDebugSession.THREAD_ID));
 		});
 
 		this._monitor.on('disconnected', () => {
-			this.sendEvent(new OutputEvent('[VICE] Monitor disconnected.\n', 'console'));
+			this.sendEvent(new OutputEvent('[VICE Debugger] Monitor socket disconnected.\n', 'console'));
 		});
 
 		this._monitor.on('error', (err: Error) => {
@@ -96,21 +116,30 @@ export class ViceDebugSession extends LoggingDebugSession {
 		this.sendResponse(response);
 
 		if (this._monitor.isConnected) {
-			try {
-				this._currentRegisters = await this._monitor.getRegisters();
-				this._currentPc = this._currentRegisters.pc;
-			} catch {}
-
 			if (this._stopOnDebug) {
-				this.sendEvent(new StoppedEvent('entry', ViceDebugSession.THREAD_ID));
+				try {
+					this._waitingForEntry = true;
+					const entryHex = `$${this._entryAddress.toString(16).padStart(4, '0').toUpperCase()}`;
+					this.sendEvent(new OutputEvent(`[VICE Debugger] Requesting one-shot entry breakpoint at ${entryHex}...\n`, 'console'));
+
+					const cpId = await this._monitor.setCheckpoint(this._entryAddress, true, true, 0);
+					this.sendEvent(new OutputEvent(`[VICE Debugger] Checkpoint established: Checkpoint ID #${cpId} at ${entryHex}\n`, 'console'));
+				} catch (err: any) {
+					this.sendEvent(new OutputEvent(`[VICE Debugger ERROR] Failed to set entry checkpoint: ${err?.message || err}\n`, 'stderr'));
+				}
+
+				// Exit monitor to let VICE boot and hit breakpoint
+				try {
+					this.sendEvent(new OutputEvent('[VICE Debugger] Resuming VICE emulation to run until entry breakpoint...\n', 'console'));
+					await this._monitor.exitMonitor();
+				} catch (err: any) {
+					this.sendEvent(new OutputEvent(`[VICE Debugger] Exit monitor command status: ${err?.message || err}\n`, 'console'));
+				}
 			} else {
 				try {
+					this.sendEvent(new OutputEvent('[VICE Debugger] Resuming VICE emulation (stopOnDebug=false)...\n', 'console'));
 					await this._monitor.exitMonitor();
 				} catch {}
-			}
-		} else {
-			if (this._stopOnDebug) {
-				this.sendEvent(new StoppedEvent('entry', ViceDebugSession.THREAD_ID));
 			}
 		}
 	}
@@ -125,12 +154,25 @@ export class ViceDebugSession extends LoggingDebugSession {
 		const viceExecutable = args.viceExecutable || 'x64sc';
 		const installationDir = args.viceDirectory || '';
 
-		this.sendEvent(
-			new OutputEvent(
-				`[VICE Debugger] Launching ${viceExecutable} from "${installationDir}" (Monitor: ${host}:${port})\n`,
-				'console'
-			)
-		);
+		this.sendEvent(new OutputEvent('========================================\n[VICE Debugger] Starting Debug Session\n========================================\n', 'console'));
+
+		// Inspect target PRG to discover entry point
+		if (args.program) {
+			this.sendEvent(new OutputEvent(`[VICE Debugger] Inspecting program: "${args.program}"\n`, 'console'));
+			const prgInfo = parsePrgHeader(args.program);
+			if (prgInfo) {
+				this._entryAddress = prgInfo.entryAddress;
+				const loadHex = `$${prgInfo.loadAddress.toString(16).padStart(4, '0').toUpperCase()}`;
+				const entryHex = `$${prgInfo.entryAddress.toString(16).padStart(4, '0').toUpperCase()}`;
+				this.sendEvent(new OutputEvent(`[VICE Debugger] PRG Analysis: Load=${loadHex}, Entry=${entryHex}, HasBasicStub=${prgInfo.hasBasicStub}\n[VICE Debugger] Details: ${prgInfo.details}\n`, 'console'));
+			} else {
+				this._entryAddress = 0x080d;
+				this.sendEvent(new OutputEvent('[VICE Debugger Warning] Could not parse PRG header, defaulting entry to $080D.\n', 'console'));
+			}
+		} else {
+			this._entryAddress = 0x080d;
+			this.sendEvent(new OutputEvent('[VICE Debugger Warning] No program specified, defaulting entry to $080D.\n', 'console'));
+		}
 
 		try {
 			// Spawn VICE emulator process
@@ -147,9 +189,8 @@ export class ViceDebugSession extends LoggingDebugSession {
 			);
 
 			// Connect to binary monitor
-			this.sendEvent(new OutputEvent(`[VICE Debugger] Connecting to Binary Monitor at ${host}:${port}...\n`, 'console'));
 			await this._monitor.connect(host, port, 12000, 500);
-			this.sendEvent(new OutputEvent('[VICE Debugger] Successfully connected to VICE Binary Monitor!\n', 'console'));
+			this.sendEvent(new OutputEvent('[VICE Debugger] Connected to VICE Binary Monitor.\n', 'console'));
 
 			this.sendResponse(response);
 		} catch (err: any) {

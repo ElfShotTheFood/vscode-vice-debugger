@@ -25,7 +25,7 @@ export const VICE_MONITOR_COMMAND = {
 	EXECUTE_UNTIL_RETURN: 0x73,
 	PING: 0x81,
 	BANKS_AVAILABLE: 0xaa,
-	EXIT_MONITOR: 0xaa, // In VICE protocol, exit monitor command resumes normal execution
+	EXIT_MONITOR: 0xaa,
 	QUIT: 0xfb,
 	RESET: 0xfc,
 	AUTOSTART: 0xfd,
@@ -35,6 +35,46 @@ export const VICE_MONITOR_COMMAND = {
 	EVENT_STOPPED: 0xef,
 	EVENT_RESUMED: 0xf1
 } as const;
+
+export function getCommandName(commandType: number): string {
+	switch (commandType) {
+		case 0x01: return 'MEMORY_GET (0x01)';
+		case 0x02: return 'MEMORY_SET (0x02)';
+		case 0x11: return 'REGISTERS_GET (0x11)';
+		case 0x12: return 'REGISTERS_SET (0x12)';
+		case 0x21: return 'CHECKPOINT_SET (0x21)';
+		case 0x22: return 'CHECKPOINT_GET (0x22)';
+		case 0x23: return 'CHECKPOINT_DELETE (0x23)';
+		case 0x24: return 'CHECKPOINT_LIST (0x24)';
+		case 0x25: return 'CHECKPOINT_TOGGLE (0x25)';
+		case 0x31: return 'CONDITION_SET (0x31)';
+		case 0x41: return 'REGISTERS_AVAILABLE (0x41)';
+		case 0x51: return 'DUMP (0x51)';
+		case 0x52: return 'UNDUMP (0x52)';
+		case 0x61: return 'RESOURCE_GET (0x61)';
+		case 0x62: return 'RESOURCE_SET (0x62)';
+		case 0x71: return 'ADVANCE_INSTRUCTION (0x71)';
+		case 0x72: return 'KEYBOARD_FEED (0x72)';
+		case 0x73: return 'EXECUTE_UNTIL_RETURN (0x73)';
+		case 0x81: return 'PING (0x81)';
+		case 0xaa: return 'BANKS_AVAILABLE/EXIT (0xAA)';
+		case 0xbb: return 'REGISTERS_AVAILABLE (0xBB)';
+		case 0xfb: return 'QUIT (0xFB)';
+		case 0xfc: return 'RESET (0xFC)';
+		case 0xfd: return 'AUTOSTART (0xFD)';
+		case 0xee: return 'EVENT_JAM (0xEE)';
+		case 0xef: return 'EVENT_STOPPED (0xEF)';
+		case 0xf1: return 'EVENT_RESUMED (0xF1)';
+		case 0x00: return 'RESPONSE_OK (0x00)';
+		default: return `UNKNOWN (0x${commandType.toString(16).padStart(2, '0').toUpperCase()})`;
+	}
+}
+
+export function bufferToHex(buf: Buffer, maxBytes = 32): string {
+	const slice = buf.subarray(0, maxBytes);
+	const hex = Array.from(slice).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
+	return buf.length > maxBytes ? `${hex} ... (${buf.length} bytes total)` : `${hex} (${buf.length} bytes)`;
+}
 
 export interface IViceRegisters {
 	a: number;
@@ -56,24 +96,41 @@ export interface IViceMonitorResponse {
 export class ViceMonitorClient extends EventEmitter {
 	private _socket: net.Socket | null = null;
 	private _requestId = 1;
-	private _pendingRequests = new Map<number, { resolve: (resp: IViceMonitorResponse) => void; reject: (err: Error) => void; timeoutTimer: NodeJS.Timeout }>();
+	private _pendingRequests = new Map<number, {
+		commandType: number;
+		resolve: (resp: IViceMonitorResponse) => void;
+		reject: (err: Error) => void;
+		timeoutTimer: NodeJS.Timeout
+	}>();
 	private _receiveBuffer = Buffer.alloc(0);
 	private _isConnected = false;
+
+	public onLog?: (message: string) => void;
 
 	public get isConnected(): boolean {
 		return this._isConnected;
 	}
 
-	public async connect(host: string, port: number, timeoutMs = 10000, retryIntervalMs = 500): Promise<void> {
+	private _log(msg: string): void {
+		if (this.onLog) {
+			this.onLog(msg.endsWith('\n') ? msg : msg + '\n');
+		}
+	}
+
+	public async connect(host: string, port: number, timeoutMs = 12000, retryIntervalMs = 500): Promise<void> {
 		const startTime = Date.now();
+		let attempt = 0;
 
 		while (Date.now() - startTime < timeoutMs) {
+			attempt++;
 			try {
+				this._log(`[VICE Monitor] Connection attempt #${attempt} to ${host}:${port}...`);
 				await this._attemptConnect(host, port);
 				this._isConnected = true;
+				this._log(`[VICE Monitor] Connected to ${host}:${port} on attempt #${attempt}!`);
 				this.emit('connected');
 				return;
-			} catch (_err) {
+			} catch (_err: any) {
 				await new Promise(resolve => setTimeout(resolve, retryIntervalMs));
 			}
 		}
@@ -146,13 +203,17 @@ export class ViceMonitorClient extends EventEmitter {
 
 		const packet = Buffer.concat([header, body]);
 
+		this._log(`[VICE Monitor TX] Req #${reqId} -> ${getCommandName(commandType)} | Body (${body.length}B): ${bufferToHex(body)}`);
+
 		return new Promise<IViceMonitorResponse>((resolve, reject) => {
 			const timeoutTimer = setTimeout(() => {
 				this._pendingRequests.delete(reqId);
-				reject(new Error(`Timeout waiting for response to command 0x${commandType.toString(16)} (Request ID ${reqId})`));
+				const err = new Error(`Timeout waiting for response to ${getCommandName(commandType)} (Req #${reqId})`);
+				this._log(`[VICE Monitor ERROR] ${err.message}`);
+				reject(err);
 			}, timeoutMs);
 
-			this._pendingRequests.set(reqId, { resolve, reject, timeoutTimer });
+			this._pendingRequests.set(reqId, { commandType, resolve, reject, timeoutTimer });
 			this._socket!.write(packet);
 		});
 	}
@@ -167,7 +228,6 @@ export class ViceMonitorClient extends EventEmitter {
 	}
 
 	public async stepInstruction(stepOver = false): Promise<void> {
-		// body: [step_over (1 byte), count (2 bytes uint16 LE)]
 		const body = Buffer.alloc(3);
 		body[0] = stepOver ? 0x01 : 0x00;
 		body.writeUInt16LE(1, 1);
@@ -178,19 +238,29 @@ export class ViceMonitorClient extends EventEmitter {
 		await this.sendCommand(VICE_MONITOR_COMMAND.EXECUTE_UNTIL_RETURN);
 	}
 
-	public async setCheckpoint(address: number, stopWhenHit = true, isTemp = false): Promise<number> {
-		// body: [start_addr (uint16), end_addr (uint16), stop_when_hit (uint8), enabled (uint8), cpu_op (uint8), is_temp (uint8)]
-		const body = Buffer.alloc(8);
+	public async setCheckpoint(address: number, stopWhenHit = true, isTemp = false, memspace = 0): Promise<number> {
+		// VICE CHECKPOINT_SET (0x21) Body:
+		// 0..1: start_addr (uint16 LE)
+		// 2..3: end_addr (uint16 LE)
+		// 4: stop_when_hit (uint8)
+		// 5: enabled (uint8)
+		// 6: cpu_operation (uint8: 1=exec, 2=load, 4=store)
+		// 7: temporary (uint8)
+		// 8: memspace (uint8: 0=main CPU)
+		const body = Buffer.alloc(9);
 		body.writeUInt16LE(address, 0);
 		body.writeUInt16LE(address, 2);
 		body[4] = stopWhenHit ? 0x01 : 0x00;
 		body[5] = 0x01; // enabled
 		body[6] = 0x01; // CPU Exec
 		body[7] = isTemp ? 0x01 : 0x00;
+		body[8] = memspace;
 
 		const resp = await this.sendCommand(VICE_MONITOR_COMMAND.CHECKPOINT_SET, body);
 		if (resp.body.length >= 4) {
-			return resp.body.readUInt32LE(0);
+			const cpId = resp.body.readUInt32LE(0);
+			this._log(`[VICE Monitor] Checkpoint created successfully at $${address.toString(16).padStart(4, '0').toUpperCase()} -> Checkpoint ID ${cpId}`);
+			return cpId;
 		}
 		return 0;
 	}
@@ -216,8 +286,6 @@ export class ViceMonitorClient extends EventEmitter {
 			rawMap: new Map()
 		};
 
-		// Body contains: error_code (1 byte) + item_count (2 bytes) + items...
-		// In response packet: resp.errorCode is separated, resp.body contains item count and items.
 		if (resp.body.length >= 2) {
 			const count = resp.body.readUInt16LE(0);
 			let offset = 2;
@@ -228,8 +296,6 @@ export class ViceMonitorClient extends EventEmitter {
 
 				result.rawMap.set(regId, regVal);
 
-				// Standard 6502 register IDs in VICE:
-				// 0x00: A, 0x01: X, 0x02: Y, 0x03: PC, 0x04: SP, 0x05: Flags/FL
 				switch (regId) {
 					case 0x00: result.a = regVal & 0xff; break;
 					case 0x01: result.x = regVal & 0xff; break;
@@ -247,7 +313,6 @@ export class ViceMonitorClient extends EventEmitter {
 	}
 
 	public async getMemory(startAddr: number, endAddr: number, memspace = 0, bankId = 0): Promise<Buffer> {
-		// body: [sidefx (uint8), start (uint16), end (uint16), memspace (uint8), bank_id (uint16)]
 		const body = Buffer.alloc(8);
 		body[0] = 0x00; // sidefx = false
 		body.writeUInt16LE(startAddr, 1);
@@ -268,7 +333,6 @@ export class ViceMonitorClient extends EventEmitter {
 
 		while (this._receiveBuffer.length >= 11) {
 			if (this._receiveBuffer[0] !== 0x02) {
-				// Search for next STX
 				const nextStx = this._receiveBuffer.indexOf(0x02, 1);
 				if (nextStx === -1) {
 					this._receiveBuffer = Buffer.alloc(0);
@@ -284,7 +348,6 @@ export class ViceMonitorClient extends EventEmitter {
 			const totalPacketLength = 11 + bodyLength;
 
 			if (this._receiveBuffer.length < totalPacketLength) {
-				// Waiting for full body
 				return;
 			}
 
@@ -299,21 +362,27 @@ export class ViceMonitorClient extends EventEmitter {
 	}
 
 	private _handlePacket(commandType: number, reqId: number, body: Buffer): void {
-		// Check for Asynchronous Events
+		// Asynchronous Events from VICE
 		if (commandType === VICE_MONITOR_COMMAND.EVENT_STOPPED) {
 			const pc = body.length >= 2 ? body.readUInt16LE(0) : 0;
+			const pcHex = `$${pc.toString(16).padStart(4, '0').toUpperCase()}`;
+			this._log(`[VICE Monitor EVENT] EVENT_STOPPED (0xEF) at PC=${pcHex} | Body (${body.length}B): ${bufferToHex(body)}`);
 			this.emit('stopped', { pc });
 			return;
 		}
 
 		if (commandType === VICE_MONITOR_COMMAND.EVENT_RESUMED) {
 			const pc = body.length >= 2 ? body.readUInt16LE(0) : 0;
+			const pcHex = `$${pc.toString(16).padStart(4, '0').toUpperCase()}`;
+			this._log(`[VICE Monitor EVENT] EVENT_RESUMED (0xF1) at PC=${pcHex} | Body (${body.length}B): ${bufferToHex(body)}`);
 			this.emit('resumed', { pc });
 			return;
 		}
 
 		if (commandType === VICE_MONITOR_COMMAND.EVENT_JAM) {
 			const pc = body.length >= 2 ? body.readUInt16LE(0) : 0;
+			const pcHex = `$${pc.toString(16).padStart(4, '0').toUpperCase()}`;
+			this._log(`[VICE Monitor EVENT] EVENT_JAM (0xEE) at PC=${pcHex} | Body (${body.length}B): ${bufferToHex(body)}`);
 			this.emit('jam', { pc });
 			return;
 		}
@@ -327,22 +396,28 @@ export class ViceMonitorClient extends EventEmitter {
 			const errorCode = body.length > 0 ? body[0] : 0;
 			const payload = body.length > 1 ? body.subarray(1) : Buffer.alloc(0);
 
+			this._log(`[VICE Monitor RX] Req #${reqId} <- ${getCommandName(commandType)} | ErrorCode=0x${errorCode.toString(16).padStart(2, '0')} (${errorCode === 0 ? 'OK' : 'ERR'}) | Payload (${payload.length}B): ${bufferToHex(payload)}`);
+
 			pending.resolve({
 				requestId: reqId,
 				commandType,
 				errorCode,
 				body: payload
 			});
+		} else {
+			this._log(`[VICE Monitor RX] Uncorrelated Packet: Command=${getCommandName(commandType)}, Req #${reqId} | Body (${body.length}B): ${bufferToHex(body)}`);
 		}
 	}
 
 	private _onClose(): void {
 		this._isConnected = false;
+		this._log('[VICE Monitor] Socket closed.');
 		this._cleanupPending(new Error('Monitor socket closed.'));
 		this.emit('disconnected');
 	}
 
 	private _onError(err: Error): void {
+		this._log(`[VICE Monitor Socket Error] ${err.message}`);
 		this.emit('error', err);
 	}
 
@@ -409,11 +484,20 @@ export class ViceProcessLauncher {
 		];
 
 		if (options.program && options.program.trim().length > 0) {
-			args.push(options.program.trim());
+			const prog = options.program.trim();
+			if (fs.existsSync(prog)) {
+				// Use -autostart to ensure VICE loads and executes the PRG
+				args.push('-autostart', prog);
+			} else {
+				if (outputCallback) {
+					outputCallback(`[VICE Launcher Warning] Program file not found: "${prog}"\n`);
+				}
+				args.push(prog);
+			}
 		}
 
 		if (outputCallback) {
-			outputCallback(`[VICE Launcher] Spawning: ${exePath} ${args.join(' ')}\n`);
+			outputCallback(`[VICE Launcher] Spawning: "${exePath}" ${args.map(a => a.includes(' ') ? `"${a}"` : a).join(' ')}\n`);
 		}
 
 		this._process = cp.spawn(exePath, args, {
@@ -435,13 +519,13 @@ export class ViceProcessLauncher {
 
 		this._process.on('error', err => {
 			if (outputCallback) {
-				outputCallback(`[VICE error] ${err.message}\n`);
+				outputCallback(`[VICE process error] ${err.message}\n`);
 			}
 		});
 
 		this._process.on('exit', (code, signal) => {
 			if (outputCallback) {
-				outputCallback(`[VICE exit] Process exited with code ${code}, signal ${signal}\n`);
+				outputCallback(`[VICE process exit] Exited with code ${code}, signal ${signal}\n`);
 			}
 			this._process = null;
 		});
