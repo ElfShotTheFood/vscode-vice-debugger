@@ -17,9 +17,17 @@
   "main": "./dist/extension.js",
   "activationEvents": [
     "onDebugResolve:vice",
-    "onDebugDynamicConfigurations:vice"
+    "onDebugDynamicConfigurations:vice",
+    "onCommand:extension.vice-debugger.createLaunchJson"
   ],
   "contributes": {
+    "commands": [
+      {
+        "command": "extension.vice-debugger.createLaunchJson",
+        "title": "Create launch.json Configuration",
+        "category": "VICE Debugger"
+      }
+    ],
     "breakpoints": [
       {
         "language": "assembly"
@@ -45,9 +53,34 @@
                 "description": "Path to the PRG or binary file to debug.",
                 "default": "${workspaceFolder}/main.prg"
               },
-              "stopOnEntry": {
+              "viceExecutable": {
+                "type": "string",
+                "description": "VICE emulator executable name (e.g. x64sc, xpet, x128, xvic, xplus4, xcbm2, xcbm5x0).",
+                "default": "x64sc",
+                "enum": [
+                  "x64sc",
+                  "x64",
+                  "x128",
+                  "xpet",
+                  "xvic",
+                  "xplus4",
+                  "xcbm2",
+                  "xcbm5x0"
+                ],
+                "enumDescriptions": [
+                  "Commodore 64 (accurate)",
+                  "Commodore 64 (fast)",
+                  "Commodore 128",
+                  "Commodore PET",
+                  "Commodore VIC-20",
+                  "Commodore Plus/4, C16",
+                  "Commodore CBM-II (6x0/7x0)",
+                  "Commodore CBM-II (5x0)"
+                ]
+              },
+              "stopOnDebug": {
                 "type": "boolean",
-                "description": "Automatically stop after launch.",
+                "description": "Automatically pause execution at startup when debugging begins.",
                 "default": true
               },
               "viceHost": {
@@ -75,9 +108,9 @@
                 "description": "Port where VICE binary monitor is listening.",
                 "default": 6510
               },
-              "stopOnEntry": {
+              "stopOnDebug": {
                 "type": "boolean",
-                "description": "Automatically stop after attach.",
+                "description": "Automatically pause execution after attaching to monitor.",
                 "default": true
               }
             }
@@ -87,41 +120,71 @@
           {
             "type": "vice",
             "request": "launch",
-            "name": "VICE: Launch & Debug",
+            "name": "VICE: Launch & Debug (C64)",
+            "viceExecutable": "x64sc",
             "program": "${workspaceFolder}/main.prg",
-            "stopOnEntry": true
-          },
-          {
-            "type": "vice",
-            "request": "attach",
-            "name": "VICE: Attach to Monitor",
-            "viceHost": "127.0.0.1",
-            "vicePort": 6510,
-            "stopOnEntry": true
+            "stopOnDebug": true
           }
         ],
         "configurationSnippets": [
           {
-            "label": "VICE: Launch",
-            "description": "Launch a program in VICE and attach debugger.",
+            "label": "VICE: Launch (C64)",
+            "description": "Launch 6502 program in VICE (x64sc) and debug.",
             "body": {
               "type": "vice",
               "request": "launch",
-              "name": "VICE: Launch & Debug",
+              "name": "VICE: Launch & Debug (C64)",
+              "viceExecutable": "x64sc",
               "program": "^\"\\${workspaceFolder}/main.prg\"",
-              "stopOnEntry": true
+              "stopOnDebug": true
+            }
+          },
+          {
+            "label": "VICE: Launch (PET)",
+            "description": "Launch 6502 program in VICE (xpet) and debug.",
+            "body": {
+              "type": "vice",
+              "request": "launch",
+              "name": "VICE: Launch & Debug (PET)",
+              "viceExecutable": "xpet",
+              "program": "^\"\\${workspaceFolder}/main.prg\"",
+              "stopOnDebug": true
+            }
+          },
+          {
+            "label": "VICE: Launch (VIC-20)",
+            "description": "Launch 6502 program in VICE (xvic) and debug.",
+            "body": {
+              "type": "vice",
+              "request": "launch",
+              "name": "VICE: Launch & Debug (VIC-20)",
+              "viceExecutable": "xvic",
+              "program": "^\"\\${workspaceFolder}/main.prg\"",
+              "stopOnDebug": true
+            }
+          },
+          {
+            "label": "VICE: Launch (C128)",
+            "description": "Launch 6502 program in VICE (x128) and debug.",
+            "body": {
+              "type": "vice",
+              "request": "launch",
+              "name": "VICE: Launch & Debug (C128)",
+              "viceExecutable": "x128",
+              "program": "^\"\\${workspaceFolder}/main.prg\"",
+              "stopOnDebug": true
             }
           },
           {
             "label": "VICE: Attach",
-            "description": "Attach to an existing running VICE instance with monitor enabled.",
+            "description": "Attach to an existing running VICE monitor.",
             "body": {
               "type": "vice",
               "request": "attach",
               "name": "VICE: Attach to Monitor",
               "viceHost": "127.0.0.1",
               "vicePort": 6510,
-              "stopOnEntry": true
+              "stopOnDebug": true
             }
           }
         ]

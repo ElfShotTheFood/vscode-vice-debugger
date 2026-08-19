@@ -13,6 +13,8 @@ import { DebugProtocol } from '@vscode/debugprotocol';
 
 export interface IViceLaunchRequestArguments extends DebugProtocol.LaunchRequestArguments {
 	program?: string;
+	viceExecutable?: string;
+	stopOnDebug?: boolean;
 	stopOnEntry?: boolean;
 	viceHost?: string;
 	vicePort?: number;
@@ -21,12 +23,14 @@ export interface IViceLaunchRequestArguments extends DebugProtocol.LaunchRequest
 export interface IViceAttachRequestArguments extends DebugProtocol.AttachRequestArguments {
 	viceHost?: string;
 	vicePort?: number;
+	stopOnDebug?: boolean;
 	stopOnEntry?: boolean;
 }
 
 export class ViceDebugSession extends LoggingDebugSession {
 	private static readonly THREAD_ID = 1;
 	private _variableHandles = new Handles<string>();
+	private _stopOnDebug = true;
 
 	public constructor() {
 		super('vice-debug.txt');
@@ -54,15 +58,18 @@ export class ViceDebugSession extends LoggingDebugSession {
 		_args: DebugProtocol.ConfigurationDoneArguments
 	): void {
 		this.sendResponse(response);
-		// Stop on entry when debugging begins
-		this.sendEvent(new StoppedEvent('entry', ViceDebugSession.THREAD_ID));
+		if (this._stopOnDebug) {
+			this.sendEvent(new StoppedEvent('entry', ViceDebugSession.THREAD_ID));
+		}
 	}
 
 	protected launchRequest(
 		response: DebugProtocol.LaunchResponse,
 		args: IViceLaunchRequestArguments
 	): void {
-		this.sendEvent(new OutputEvent(`[VICE Debugger] Launch requested for: ${args.program || 'unspecified'}\n`, 'console'));
+		this._stopOnDebug = args.stopOnDebug ?? args.stopOnEntry ?? true;
+		const emulator = args.viceExecutable || 'x64sc';
+		this.sendEvent(new OutputEvent(`[VICE Debugger] Launching with ${emulator} for program: ${args.program || 'unspecified'} (stopOnDebug: ${this._stopOnDebug})\n`, 'console'));
 		this.sendResponse(response);
 	}
 
@@ -70,9 +77,10 @@ export class ViceDebugSession extends LoggingDebugSession {
 		response: DebugProtocol.AttachResponse,
 		args: IViceAttachRequestArguments
 	): void {
+		this._stopOnDebug = args.stopOnDebug ?? args.stopOnEntry ?? true;
 		const host = args.viceHost || '127.0.0.1';
 		const port = args.vicePort || 6510;
-		this.sendEvent(new OutputEvent(`[VICE Debugger] Attaching to monitor at ${host}:${port}\n`, 'console'));
+		this.sendEvent(new OutputEvent(`[VICE Debugger] Attaching to monitor at ${host}:${port} (stopOnDebug: ${this._stopOnDebug})\n`, 'console'));
 		this.sendResponse(response);
 	}
 
