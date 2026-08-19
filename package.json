@@ -1,0 +1,145 @@
+{
+  "name": "vscode-vice-debugger",
+  "displayName": "VICE 6502 Debugger",
+  "version": "0.0.1",
+  "publisher": "elfshotthefood",
+  "description": "6502 assembly language debugger extension for VICE emulator and cc65 toolchain.",
+  "author": {
+    "name": "Brad"
+  },
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Debuggers"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onDebugResolve:vice",
+    "onDebugDynamicConfigurations:vice"
+  ],
+  "contributes": {
+    "breakpoints": [
+      {
+        "language": "assembly"
+      },
+      {
+        "language": "c"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "vice",
+        "label": "VICE 6502 Debugger",
+        "languages": [
+          "assembly",
+          "c"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Path to the PRG or binary file to debug.",
+                "default": "${workspaceFolder}/main.prg"
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "Automatically stop after launch.",
+                "default": true
+              },
+              "viceHost": {
+                "type": "string",
+                "description": "Host where VICE binary monitor is running.",
+                "default": "127.0.0.1"
+              },
+              "vicePort": {
+                "type": "number",
+                "description": "Port where VICE binary monitor is listening.",
+                "default": 6510
+              }
+            }
+          },
+          "attach": {
+            "required": [],
+            "properties": {
+              "viceHost": {
+                "type": "string",
+                "description": "Host where VICE binary monitor is running.",
+                "default": "127.0.0.1"
+              },
+              "vicePort": {
+                "type": "number",
+                "description": "Port where VICE binary monitor is listening.",
+                "default": 6510
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "Automatically stop after attach.",
+                "default": true
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "vice",
+            "request": "launch",
+            "name": "VICE: Launch & Debug",
+            "program": "${workspaceFolder}/main.prg",
+            "stopOnEntry": true
+          },
+          {
+            "type": "vice",
+            "request": "attach",
+            "name": "VICE: Attach to Monitor",
+            "viceHost": "127.0.0.1",
+            "vicePort": 6510,
+            "stopOnEntry": true
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "VICE: Launch",
+            "description": "Launch a program in VICE and attach debugger.",
+            "body": {
+              "type": "vice",
+              "request": "launch",
+              "name": "VICE: Launch & Debug",
+              "program": "^\"\\${workspaceFolder}/main.prg\"",
+              "stopOnEntry": true
+            }
+          },
+          {
+            "label": "VICE: Attach",
+            "description": "Attach to an existing running VICE instance with monitor enabled.",
+            "body": {
+              "type": "vice",
+              "request": "attach",
+              "name": "VICE: Attach to Monitor",
+              "viceHost": "127.0.0.1",
+              "vicePort": 6510,
+              "stopOnEntry": true
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "esbuild ./src/extension.ts --bundle --tsconfig=./tsconfig.json --external:vscode --format=cjs --platform=node --outfile=dist/extension.js --sourcemap --watch",
+    "build": "esbuild ./src/extension.ts --bundle --tsconfig=./tsconfig.json --external:vscode --format=cjs --platform=node --outfile=dist/extension.js --sourcemap",
+    "vscode:prepublish": "esbuild ./src/extension.ts --bundle --tsconfig=./tsconfig.json --external:vscode --format=cjs --platform=node --outfile=dist/extension.js --minify"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.0",
+    "@types/vscode": "^1.74.0",
+    "@vscode/debugadapter": "^1.65.0",
+    "@vscode/debugprotocol": "^1.65.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.3"
+  }
+}
