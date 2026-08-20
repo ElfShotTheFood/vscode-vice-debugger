@@ -8,6 +8,18 @@ export interface IPrgInfo {
 	details: string;
 }
 
+export interface IDebugLocation {
+	file: string;
+	line: number;
+	address: number;
+	endAddress: number;
+}
+
+export interface ICc65DebugInfo {
+	locations: IDebugLocation[];
+	files: Map<number, string>;
+}
+
 /**
  * Parses a Commodore 6502 PRG file to determine its load address and entry point.
  */
@@ -89,6 +101,77 @@ export function findViceLabelAddress(programPath: string, labelName: string): nu
 		// Label metadata is optional; the caller can fall back to the PRG address.
 	}
 	return null;
+}
+
+/**
+ * Reads the line/span portion of a cc65 linker .dbg file.  cc65 uses records
+ * such as `file id=1,name="foo.s"`, `span id=1,seg=0,start=...`, and
+ * `line file=1,line=...,span=1`.  Unknown records are intentionally ignored.
+ */
+export function parseCc65DebugFile(filePath: string, baseDirectory = path.dirname(filePath)): ICc65DebugInfo | null {
+	try {
+		if (!fs.existsSync(filePath)) { return null; }
+		const text = fs.readFileSync(filePath, 'utf8');
+		const files = new Map<number, string>();
+		const segments = new Map<number, number>();
+		const spans = new Map<number, { seg: number; start: number; size: number }>();
+		const lines: Array<{ file: number; line: number; span: number }> = [];
+
+		for (const raw of text.split(/\r?\n/)) {
+			const record = raw.trim();
+			const kind = record.split(/\s+/, 1)[0];
+			const fields = parseDbgFields(record);
+			if (kind === 'file' && isNumber(fields.id) && typeof fields.name === 'string') {
+				files.set(fields.id, resolveDebugPath(fields.name, baseDirectory));
+			} else if (kind === 'seg' && isNumber(fields.id) && isNumber(fields.start)) {
+				segments.set(fields.id, fields.start);
+			} else if (kind === 'span' && isNumber(fields.id) && isNumber(fields.seg) && isNumber(fields.start) && isNumber(fields.size)) {
+				spans.set(fields.id, { seg: fields.seg, start: fields.start, size: fields.size });
+			} else if (kind === 'line' && isNumber(fields.file) && isNumber(fields.line) && isNumber(fields.span)) {
+				lines.push({ file: fields.file, line: fields.line, span: fields.span });
+			}
+		}
+
+		const locations: IDebugLocation[] = [];
+		for (const line of lines) {
+			const span = spans.get(line.span);
+			const file = files.get(line.file);
+			if (!span || !file) { continue; }
+			const segmentStart = segments.get(span.seg) ?? 0;
+			const address = segmentStart + span.start;
+			if (address >= 0 && address <= 0xffff && span.size > 0) {
+				locations.push({ file, line: line.line, address, endAddress: Math.min(0x10000, address + span.size) });
+			}
+		}
+		return { files, locations };
+	} catch (_err) {
+		return null;
+	}
+}
+
+function parseDbgFields(record: string): Record<string, number | string | undefined> {
+	const result: Record<string, number | string | undefined> = {};
+	const body = record.replace(/^\S+\s*/, '');
+	const pattern = /([A-Za-z][A-Za-z0-9_]*)=("(?:\\.|[^"\\])*"|[^,\s]+)/g;
+	let match: RegExpExecArray | null;
+	while ((match = pattern.exec(body)) !== null) {
+		const value = match[2];
+		if (value.startsWith('"')) {
+			try { result[match[1]] = JSON.parse(value); } catch { result[match[1]] = value.slice(1, -1); }
+		} else {
+			const number = /^\$[0-9a-f]+$/i.test(value) ? parseInt(value.slice(1), 16) : Number(value);
+			result[match[1]] = Number.isNaN(number) ? value : number;
+		}
+	}
+	return result;
+}
+
+function resolveDebugPath(fileName: string, baseDirectory: string): string {
+	return path.normalize(path.isAbsolute(fileName) ? fileName : path.resolve(baseDirectory, fileName));
+}
+
+function isNumber(value: number | string | undefined): value is number {
+	return typeof value === 'number' && Number.isFinite(value);
 }
 
 function escapeRegExp(value: string): string {

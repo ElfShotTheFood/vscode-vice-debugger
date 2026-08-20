@@ -6,17 +6,20 @@ import {
 	Thread,
 	StackFrame,
 	Scope,
-	Handles
+	Handles,
+	Source
 } from '@vscode/debugadapter';
+import * as path from 'path';
 import { DebugProtocol } from '@vscode/debugprotocol';
 import { ViceMonitorClient, ViceProcessLauncher, IViceRegisters } from './viceMonitor';
-import { findViceLabelAddress, parsePrgHeader } from './prgReader';
+import { findViceLabelAddress, parseCc65DebugFile, parsePrgHeader, IDebugLocation } from './prgReader';
 
 export interface IViceLaunchRequestArguments extends DebugProtocol.LaunchRequestArguments {
 	program?: string;
 	viceExecutable?: string;
 	viceDirectory?: string;
 	viceArgs?: string[];
+	dbgFile?: string;
 	stopOnDebug?: boolean;
 	stopOnEntry?: boolean;
 	viceHost?: string;
@@ -43,6 +46,12 @@ export class ViceDebugSession extends LoggingDebugSession {
 	private _currentRegisters: IViceRegisters | null = null;
 	private _currentPc = 0x080d;
 	private _checkpointStopEventSent = false;
+	private _debugLocations: IDebugLocation[] = [];
+	private _breakpoints = new Map<number, { sourcePath: string; line: number; checkpointId: number; address: number }>();
+	private _checkpointToBreakpoint = new Map<number, number>();
+	private _pendingBreakpointRequests = new Map<string, DebugProtocol.SourceBreakpoint[]>();
+	private _currentSource: { path: string; line: number } | null = null;
+	private _nextBreakpointId = 1;
 
 	public constructor() {
 		super('vice-debug.txt');
@@ -86,6 +95,11 @@ export class ViceDebugSession extends LoggingDebugSession {
 		this._monitor.on('checkpointHit', ({ checkpointId, address }) => {
 			this._currentPc = address;
 			this._waitingForEntry = false;
+			const breakpointId = this._checkpointToBreakpoint.get(checkpointId);
+			const location = this._findLocation(address);
+			if (location) {
+				this._currentSource = { path: location.file, line: location.line };
+			}
 			const addressHex = `$${address.toString(16).padStart(4, '0').toUpperCase()}`;
 			this.sendEvent(new OutputEvent(
 				`[VICE Debugger] Recognized checkpoint #${checkpointId} hit at ${addressHex}; notifying VS Code.\n`,
@@ -99,7 +113,9 @@ export class ViceDebugSession extends LoggingDebugSession {
 			// The installed DAP typings predate hitBreakpointIds, but VS Code
 			// understands this standard StoppedEvent body property on the wire.
 			const stoppedBody = stoppedEvent.body as { reason: string; hitBreakpointIds?: number[] };
-			stoppedBody.hitBreakpointIds = [checkpointId];
+			if (breakpointId !== undefined) {
+				stoppedBody.hitBreakpointIds = [breakpointId];
+			}
 			this._checkpointStopEventSent = true;
 			this.sendEvent(stoppedEvent);
 		});
@@ -164,6 +180,14 @@ export class ViceDebugSession extends LoggingDebugSession {
 		// Inspect target PRG to discover entry point
 		if (args.program) {
 			this.sendEvent(new OutputEvent(`[VICE Debugger] Inspecting program: "${args.program}"\n`, 'console'));
+			const dbgPath = args.dbgFile || path.join(path.dirname(args.program), `${path.basename(args.program, path.extname(args.program))}.dbg`);
+			const debugInfo = parseCc65DebugFile(dbgPath);
+			this._debugLocations = debugInfo?.locations || [];
+			if (debugInfo) {
+				this.sendEvent(new OutputEvent(`[VICE Debugger] Loaded ${this._debugLocations.length} source locations from "${dbgPath}".\n`, 'console'));
+			} else {
+				this.sendEvent(new OutputEvent(`[VICE Debugger Warning] No cc65 debug file found at "${dbgPath}"; source breakpoints cannot be resolved.\n`, 'console'));
+			}
 			const prgInfo = parsePrgHeader(args.program);
 			if (prgInfo) {
 				this._loadAddress = prgInfo.loadAddress;
@@ -211,7 +235,12 @@ export class ViceDebugSession extends LoggingDebugSession {
 				throw new Error(`VICE did not return a valid checkpoint ID for ${checkpointHex}.`);
 			}
 			this._waitingForEntry = this._stopOnDebug;
+			const startupLocation = this._findLocation(this._checkpointAddress);
+			if (startupLocation) {
+				this._currentSource = { path: startupLocation.file, line: startupLocation.line };
+			}
 			this.sendEvent(new OutputEvent(`[VICE Debugger] Checkpoint #${cpId} verified at ${checkpointHex}.\n`, 'console'));
+			await this._installPendingBreakpoints();
 
 			this.sendEvent(new OutputEvent('[VICE Debugger] Starting PRG execution with AUTOSTART(run=true)...\n', 'console'));
 			await this._monitor.autostart(args.program, true);
@@ -251,16 +280,18 @@ export class ViceDebugSession extends LoggingDebugSession {
 		response: DebugProtocol.SetBreakpointsResponse,
 		args: DebugProtocol.SetBreakpointsArguments
 	): Promise<void> {
+		const sourcePath = this._sourcePath(args.source);
 		const clientBreakpoints = args.breakpoints || [];
-		const actualBreakpoints = clientBreakpoints.map((bp, index) => ({
-			verified: true,
-			line: bp.line,
-			id: index + 1
-		}));
-
-		response.body = {
-			breakpoints: actualBreakpoints
-		};
+		this._pendingBreakpointRequests.set(sourcePath, clientBreakpoints);
+		const actualBreakpoints: DebugProtocol.Breakpoint[] = [];
+		if (this._monitor.isConnected) {
+			actualBreakpoints.push(...await this._replaceBreakpoints(sourcePath, clientBreakpoints));
+		} else {
+			for (const bp of clientBreakpoints) {
+				actualBreakpoints.push({ verified: false, line: bp.line, message: 'Waiting for VICE monitor connection.' });
+			}
+		}
+		response.body = { breakpoints: actualBreakpoints };
 		this.sendResponse(response);
 	}
 
@@ -282,6 +313,11 @@ export class ViceDebugSession extends LoggingDebugSession {
 			0,
 			`PC: ${pcHex}`
 		);
+		if (this._currentSource) {
+			frame.source = new Source(path.basename(this._currentSource.path), this._currentSource.path);
+			frame.line = this._currentSource.line;
+			frame.column = 1;
+		}
 		frame.instructionPointerReference = `0x${this._currentPc.toString(16).padStart(4, '0')}`;
 
 		response.body = {
@@ -405,5 +441,59 @@ export class ViceDebugSession extends LoggingDebugSession {
 		this._launcher.terminate();
 		this.sendEvent(new OutputEvent('[VICE Debugger] Session terminated.\n', 'console'));
 		this.sendResponse(response);
+	}
+
+	private _sourcePath(source: DebugProtocol.Source): string {
+		return path.normalize(source.path || source.name || '');
+	}
+
+	private _samePath(left: string, right: string): boolean {
+		return path.normalize(left).toLowerCase() === path.normalize(right).toLowerCase();
+	}
+
+	private _findLocation(address: number): IDebugLocation | null {
+		return this._debugLocations.find(location => address >= location.address && address < location.endAddress)
+			|| this._debugLocations.find(location => location.address === address)
+			|| null;
+	}
+
+	private _findSourceLocation(sourcePath: string, line: number): IDebugLocation | null {
+		return this._debugLocations.find(location => this._samePath(location.file, sourcePath) && location.line === line) || null;
+	}
+
+	private async _replaceBreakpoints(sourcePath: string, requested: DebugProtocol.SourceBreakpoint[]): Promise<DebugProtocol.Breakpoint[]> {
+		for (const [dapId, breakpoint] of this._breakpoints) {
+			if (this._samePath(breakpoint.sourcePath, sourcePath)) {
+				try { await this._monitor.deleteCheckpoint(breakpoint.checkpointId); } catch {}
+				this._checkpointToBreakpoint.delete(breakpoint.checkpointId);
+				this._breakpoints.delete(dapId);
+			}
+		}
+
+		const result: DebugProtocol.Breakpoint[] = [];
+		for (const requestedBreakpoint of requested) {
+			const location = this._findSourceLocation(sourcePath, requestedBreakpoint.line);
+			const dapId = this._nextBreakpointId++;
+			if (!location) {
+				result.push({ id: dapId, verified: false, line: requestedBreakpoint.line, message: 'No address for this source line in the cc65 .dbg file.' });
+				continue;
+			}
+			try {
+				const checkpointId = await this._monitor.setCheckpoint(location.address, true, false);
+				this._breakpoints.set(dapId, { sourcePath, line: requestedBreakpoint.line, checkpointId, address: location.address });
+				this._checkpointToBreakpoint.set(checkpointId, dapId);
+				result.push({ id: dapId, verified: true, line: requestedBreakpoint.line, source: new Source(path.basename(location.file), location.file), instructionReference: `0x${location.address.toString(16).padStart(4, '0')}` });
+			} catch (err: any) {
+				result.push({ id: dapId, verified: false, line: requestedBreakpoint.line, message: err?.message || String(err) });
+			}
+		}
+		return result;
+	}
+
+	private async _installPendingBreakpoints(): Promise<void> {
+		for (const [sourcePath, requested] of this._pendingBreakpointRequests) {
+			const breakpoints = await this._replaceBreakpoints(sourcePath, requested);
+			this.sendEvent(new OutputEvent(`[VICE Debugger] Installed ${breakpoints.filter(bp => bp.verified).length} source breakpoint(s) for ${sourcePath}.\n`, 'console'));
+		}
 	}
 }
