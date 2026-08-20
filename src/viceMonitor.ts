@@ -76,6 +76,13 @@ export function bufferToHex(buf: Buffer, maxBytes = 64): string {
 	return buf.length > maxBytes ? `${hex} ... (${buf.length} bytes total)` : `${hex} (${buf.length} bytes)`;
 }
 
+export interface IViceDecodedRegister {
+	id: number;
+	name: string;
+	size: number;
+	value: number;
+}
+
 export interface IViceRegisters {
 	a: number;
 	x: number;
@@ -84,6 +91,14 @@ export interface IViceRegisters {
 	pc: number;
 	flags: number;
 	rawMap: Map<number, number>;
+	/** Values decoded using the definitions returned by REGISTERS_AVAILABLE. */
+	namedMap: Map<string, IViceDecodedRegister>;
+}
+
+export interface IViceRegisterDefinition {
+	id: number;
+	size: number;
+	name: string;
 }
 
 export interface IViceMonitorResponse {
@@ -112,6 +127,8 @@ export class ViceMonitorClient extends EventEmitter {
 	private _checkpoints = new Map<number, number>();
 	private _logClockWallMs: number | undefined;
 	private _logClockHrtimeNs: bigint | undefined;
+	private _registerDefinitions = new Map<number, IViceRegisterDefinition>();
+	private _registerIdsByName = new Map<string, number>();
 
 	public onLog?: (message: string) => void;
 
@@ -255,6 +272,39 @@ export class ViceMonitorClient extends EventEmitter {
 		return res.errorCode === 0;
 	}
 
+	/** Query register names, ids, and widths from VICE rather than assuming a CPU layout. */
+	public async getAvailableRegisters(memspace = 0): Promise<IViceRegisterDefinition[]> {
+		const resp = await this.sendCommand(VICE_MONITOR_COMMAND.REGISTERS_AVAILABLE, Buffer.from([memspace]));
+		const definitions: IViceRegisterDefinition[] = [];
+		if (resp.body.length < 2) {
+			return definitions;
+		}
+
+		const count = resp.body.readUInt16LE(0);
+		let offset = 2;
+		for (let i = 0; i < count && offset < resp.body.length; i++) {
+			const itemSize = resp.body[offset];
+			if (itemSize < 4 || offset + 1 + itemSize > resp.body.length) {
+				break;
+			}
+			const id = resp.body[offset + 1];
+			const size = resp.body[offset + 2]; // register width in bits
+			// VICE includes a type byte between the width and the NUL-terminated
+			// register name. itemSize includes id, width, type, and name bytes.
+			const nameBytes = resp.body.subarray(offset + 4, offset + 1 + itemSize);
+			const definition = { id, size, name: nameBytes.toString('utf8').replace(/\0.*$/, '') };
+			definitions.push(definition);
+			this._registerDefinitions.set(id, definition);
+			const name = definition.name.trim().toUpperCase();
+			this._registerIdsByName.set(name, id);
+			if (name === 'FL' || name === 'P' || name === 'FLAGS' || name === 'STATUS') {
+				this._registerIdsByName.set('FLAGS', id);
+			}
+			offset += itemSize + 1;
+		}
+		return definitions;
+	}
+
 	public async exitMonitor(): Promise<void> {
 		await this.sendCommand(VICE_MONITOR_COMMAND.EXIT_MONITOR);
 	}
@@ -341,29 +391,47 @@ export class ViceMonitorClient extends EventEmitter {
 			sp: 0xff,
 			pc: 0,
 			flags: 0,
-			rawMap: new Map()
+			rawMap: new Map(),
+			namedMap: new Map()
 		};
 
 		if (resp.body.length >= 2) {
 			const count = resp.body.readUInt16LE(0);
 			let offset = 2;
-			for (let i = 0; i < count && offset + 3 <= resp.body.length; i++) {
+			for (let i = 0; i < count && offset + 1 < resp.body.length; i++) {
 				const itemSize = resp.body[offset];
+				// The item-size byte counts the register id plus the value bytes;
+				// the size byte itself is not included in that count.
+				if (itemSize < 2 || offset + itemSize + 1 > resp.body.length) {
+					break;
+				}
 				const regId = resp.body[offset + 1];
-				const regVal = resp.body.readUInt16LE(offset + 2);
-
-				result.rawMap.set(regId, regVal);
-
-				switch (regId) {
-					case 0x00: result.a = regVal & 0xff; break;
-					case 0x01: result.x = regVal & 0xff; break;
-					case 0x02: result.y = regVal & 0xff; break;
-					case 0x03: result.pc = regVal; break;
-					case 0x04: result.sp = regVal & 0xff; break;
-					case 0x05: result.flags = regVal & 0xff; break;
+				const definition = this._registerDefinitions.get(regId);
+				const valueWidth = definition ? Math.ceil(definition.size / 8) : (itemSize - 1);
+				const valueBytes = Math.min(valueWidth, itemSize - 1, 4);
+				let regVal = 0;
+				for (let byte = 0; byte < valueBytes && offset + 2 + byte < resp.body.length; byte++) {
+					regVal |= resp.body[offset + 2 + byte] << (byte * 8);
 				}
 
-				offset += (itemSize > 0 ? itemSize : 4);
+				result.rawMap.set(regId, regVal);
+				if (definition) {
+					result.namedMap.set(definition.name, {
+						id: regId,
+						name: definition.name,
+						size: definition.size,
+						value: regVal
+					});
+				}
+
+				if (regId === this._registerIdsByName.get('A')) { result.a = regVal & 0xff; }
+				if (regId === this._registerIdsByName.get('X')) { result.x = regVal & 0xff; }
+				if (regId === this._registerIdsByName.get('Y')) { result.y = regVal & 0xff; }
+				if (regId === this._registerIdsByName.get('PC')) { result.pc = regVal; }
+				if (regId === this._registerIdsByName.get('SP')) { result.sp = regVal & 0xff; }
+				if (regId === this._registerIdsByName.get('FLAGS')) { result.flags = regVal & 0xff; }
+
+				offset += itemSize + 1;
 			}
 		}
 

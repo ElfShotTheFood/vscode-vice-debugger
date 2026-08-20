@@ -222,6 +222,11 @@ export class ViceDebugSession extends LoggingDebugSession {
 			// Connect to binary monitor
 			await this._monitor.connect(host, port, 12000, 500);
 			this.sendEvent(new OutputEvent('[VICE Debugger] Connected to VICE Binary Monitor.\n', 'console'));
+			const registerDefinitions = await this._monitor.getAvailableRegisters();
+			this.sendEvent(new OutputEvent(
+				`[VICE Debugger] Discovered ${registerDefinitions.length} VICE CPU registers: ${registerDefinitions.map(reg => reg.name).join(', ')}\n`,
+				'console'
+			));
 
 			if (!args.program) {
 				throw new Error('A PRG program path is required for launch.');
@@ -266,6 +271,11 @@ export class ViceDebugSession extends LoggingDebugSession {
 		try {
 			await this._monitor.connect(host, port, 8000, 500);
 			this.sendEvent(new OutputEvent('[VICE Debugger] Connected to VICE Binary Monitor!\n', 'console'));
+			const registerDefinitions = await this._monitor.getAvailableRegisters();
+			this.sendEvent(new OutputEvent(
+				`[VICE Debugger] Discovered ${registerDefinitions.length} VICE CPU registers: ${registerDefinitions.map(reg => reg.name).join(', ')}\n`,
+				'console'
+			));
 			const attachPingOk = await this._monitor.ping();
 			this.sendEvent(new OutputEvent(`[VICE Debugger] PING response: ${attachPingOk ? 'OK' : 'FAILED'}\n`, attachPingOk ? 'console' : 'stderr'));
 			this.sendResponse(response);
@@ -364,21 +374,48 @@ export class ViceDebugSession extends LoggingDebugSession {
 				sp: 0xfd,
 				pc: this._currentPc,
 				flags: 0x30,
-				rawMap: new Map()
+				rawMap: new Map(),
+				namedMap: new Map()
 			};
 
 			const toHex8 = (v: number) => `$${(v & 0xff).toString(16).padStart(2, '0').toUpperCase()} (${v & 0xff})`;
 			const toHex16 = (v: number) => `$${(v & 0xffff).toString(16).padStart(4, '0').toUpperCase()}`;
 			const toBin8 = (v: number) => (v & 0xff).toString(2).padStart(8, '0');
 
-			variables.push(
-				{ name: 'PC', value: toHex16(regs.pc), variablesReference: 0 },
-				{ name: 'A', value: toHex8(regs.a), variablesReference: 0 },
-				{ name: 'X', value: toHex8(regs.x), variablesReference: 0 },
-				{ name: 'Y', value: toHex8(regs.y), variablesReference: 0 },
-				{ name: 'SP', value: toHex8(regs.sp), variablesReference: 0 },
-				{ name: 'Flags (NV-BDIZC)', value: `${toBin8(regs.flags)} (${toHex8(regs.flags)})`, variablesReference: 0 }
-			);
+			if (regs.namedMap.size > 0) {
+				for (const [name, register] of regs.namedMap) {
+					const value = register.value;
+					const width = Math.ceil(register.size / 4);
+					const isFlags = /^(FL|P|FLAGS|STATUS)$/i.test(name.trim());
+					variables.push({
+						name: `${name} [${register.id}]`,
+						value: `$${value.toString(16).padStart(width, '0').toUpperCase()} (${value})`,
+						variablesReference: isFlags ? this._variableHandles.create(`flags:${name}`) : 0
+					});
+				}
+			} else {
+				variables.push(
+					{ name: 'PC', value: toHex16(regs.pc), variablesReference: 0 },
+					{ name: 'A', value: toHex8(regs.a), variablesReference: 0 },
+					{ name: 'X', value: toHex8(regs.x), variablesReference: 0 },
+					{ name: 'Y', value: toHex8(regs.y), variablesReference: 0 },
+					{ name: 'SP', value: toHex8(regs.sp), variablesReference: 0 },
+					{ name: 'Flags (NV-BDIZC)', value: `${toBin8(regs.flags)} (${toHex8(regs.flags)})`, variablesReference: 0 }
+				);
+			}
+		} else if (typeof handle === 'string' && handle.startsWith('flags:')) {
+			const flags = this._currentRegisters?.namedMap.get(handle.slice('flags:'.length));
+			const value = flags?.value ?? this._currentRegisters?.flags ?? 0;
+			const flagNames: Array<[string, number]> = [
+				['N', 7], ['V', 6], ['-', 5], ['B', 4], ['D', 3], ['I', 2], ['Z', 1], ['C', 0]
+			];
+			for (const [name, bit] of flagNames) {
+				variables.push({
+					name,
+					value: (value & (1 << bit)) !== 0 ? 'set (1)' : 'clear (0)',
+					variablesReference: 0
+				});
+			}
 		}
 
 		response.body = {
