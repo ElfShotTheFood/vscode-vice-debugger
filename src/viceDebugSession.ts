@@ -42,6 +42,7 @@ export class ViceDebugSession extends LoggingDebugSession {
 	private _waitingForEntry = false;
 	private _currentRegisters: IViceRegisters | null = null;
 	private _currentPc = 0x080d;
+	private _checkpointStopEventSent = false;
 
 	public constructor() {
 		super('vice-debug.txt');
@@ -60,6 +61,13 @@ export class ViceDebugSession extends LoggingDebugSession {
 			this._currentPc = pc;
 			const pcHex = `$${pc.toString(16).padStart(4, '0').toUpperCase()}`;
 			this.sendEvent(new OutputEvent(`[VICE Debugger] Execution STOPPED at PC=${pcHex}\n`, 'console'));
+			// VICE may report a checkpoint hit with CHECKPOINT_GET and then also
+			// send EVENT_STOPPED. The checkpoint event already generated the DAP
+			// stop, so do not make VS Code process the same stop twice.
+			if (this._checkpointStopEventSent) {
+				this._checkpointStopEventSent = false;
+				return;
+			}
 
 			// No need to do this, I think.  Every time the monitor stops it will automatically
 			// send registers info.
@@ -73,6 +81,27 @@ export class ViceDebugSession extends LoggingDebugSession {
 			const reason = this._waitingForEntry ? 'entry' : 'breakpoint';
 			this._waitingForEntry = false;
 			this.sendEvent(new StoppedEvent(reason, ViceDebugSession.THREAD_ID));
+		});
+
+		this._monitor.on('checkpointHit', ({ checkpointId, address }) => {
+			this._currentPc = address;
+			this._waitingForEntry = false;
+			const addressHex = `$${address.toString(16).padStart(4, '0').toUpperCase()}`;
+			this.sendEvent(new OutputEvent(
+				`[VICE Debugger] Recognized checkpoint #${checkpointId} hit at ${addressHex}; notifying VS Code.\n`,
+				'console'
+			));
+
+			// DAP's hitBreakpointIds tells VS Code which breakpoint caused the
+			// stop. Use the VICE checkpoint ID as the stable ID for this internal
+			// checkpoint, so a corresponding source breakpoint can be highlighted.
+			const stoppedEvent = new StoppedEvent('breakpoint', ViceDebugSession.THREAD_ID);
+			// The installed DAP typings predate hitBreakpointIds, but VS Code
+			// understands this standard StoppedEvent body property on the wire.
+			const stoppedBody = stoppedEvent.body as { reason: string; hitBreakpointIds?: number[] };
+			stoppedBody.hitBreakpointIds = [checkpointId];
+			this._checkpointStopEventSent = true;
+			this.sendEvent(stoppedEvent);
 		});
 
 		this._monitor.on('resumed', ({ pc }) => {
@@ -169,17 +198,10 @@ export class ViceDebugSession extends LoggingDebugSession {
 			// Connect to binary monitor
 			await this._monitor.connect(host, port, 12000, 500);
 			this.sendEvent(new OutputEvent('[VICE Debugger] Connected to VICE Binary Monitor.\n', 'console'));
-			// Give VICE a moment to finish initializing the monitor connection before
-			// issuing the first command.
-			//await new Promise(resolve => setTimeout(resolve, 1000));
-
-			//const launchPingOk = await this._monitor.ping();
-			//this.sendEvent(new OutputEvent(`[VICE Debugger] PING response: ${launchPingOk ? 'OK' : 'FAILED'}\n`, launchPingOk ? 'console' : 'stderr'));
 
 			if (!args.program) {
 				throw new Error('A PRG program path is required for launch.');
 			}
-			//await new Promise(resolve => setTimeout(resolve, 1000));
 
 			const checkpointHex = `$${this._checkpointAddress.toString(16).padStart(4, '0').toUpperCase()}`;
 			const checkpointKind = this._checkpointAddress === this._loadAddress ? 'load-address' : '.initialization label';

@@ -93,6 +93,11 @@ export interface IViceMonitorResponse {
 	body: Buffer;
 }
 
+export interface IViceCheckpointHit {
+	checkpointId: number;
+	address: number;
+}
+
 export class ViceMonitorClient extends EventEmitter {
 	private _socket: net.Socket | null = null;
 	private _requestId = 1;
@@ -104,6 +109,7 @@ export class ViceMonitorClient extends EventEmitter {
 	}>();
 	private _receiveBuffer = Buffer.alloc(0);
 	private _isConnected = false;
+	private _checkpoints = new Map<number, number>();
 	private _logClockWallMs: number | undefined;
 	private _logClockHrtimeNs: bigint | undefined;
 
@@ -299,6 +305,7 @@ export class ViceMonitorClient extends EventEmitter {
 		const resp = await this.sendCommand(VICE_MONITOR_COMMAND.CHECKPOINT_SET, body);
 		if (resp.body.length >= 4) {
 			const cpId = resp.body.readUInt32LE(0);
+			this._checkpoints.set(cpId, address);
 			this._log(`[VICE Monitor] Checkpoint created successfully at $${address.toString(16).padStart(4, '0').toUpperCase()} -> Checkpoint ID ${cpId}`);
 			return cpId;
 		}
@@ -309,6 +316,7 @@ export class ViceMonitorClient extends EventEmitter {
 		const body = Buffer.alloc(4);
 		body.writeUInt32LE(checkpointId, 0);
 		await this.sendCommand(VICE_MONITOR_COMMAND.CHECKPOINT_DELETE, body);
+		this._checkpoints.delete(checkpointId);
 	}
 
 	public async listCheckpoints(): Promise<any[]> {
@@ -415,7 +423,42 @@ export class ViceMonitorClient extends EventEmitter {
 	private _handlePacket(responseType: number, errorCode: number, reqId: number, body: Buffer): void {
 		this._log(`[VICE Decoded Header] RespType=0x${responseType.toString(16).padStart(2, '0')} (${getCommandName(responseType)}), ErrorCode=0x${errorCode.toString(16).padStart(2, '0')}, ReqId=${reqId}, BodyLength=${body.length}`);
 
-			// Asynchronous events use request ID 0xffffffff.
+		// Asynchronous events use request ID 0xffffffff.
+		if (responseType === VICE_MONITOR_COMMAND.CHECKPOINT_GET && reqId === 0xffffffff) {
+			// CHECKPOINT_GET event payload layout (after the 12-byte packet header):
+			// 0..3: checkpoint ID (uint32 LE)
+			// 4: checkpoint-hit indicator
+			// 5..6: checkpoint start address (uint16 LE)
+			// 7..8: checkpoint end address (uint16 LE)
+			if (body.length < 4) {
+				this._log('[VICE Monitor EVENT] CHECKPOINT_GET was too short to contain a checkpoint ID.');
+				return;
+			}
+
+			const checkpointId = body.readUInt32LE(0);
+			const knownAddress = this._checkpoints.get(checkpointId);
+			if (knownAddress === undefined) {
+				this._log(`[VICE Monitor EVENT] CHECKPOINT_GET for unknown checkpoint ID ${checkpointId}.`);
+				return;
+			}
+
+			if (body.length < 7) {
+				this._log(`[VICE Monitor EVENT] CHECKPOINT_GET for checkpoint ID ${checkpointId} was too short to contain its address.`);
+				return;
+			}
+
+			if (body[4] !== 0x01) {
+				this._log(`[VICE Monitor EVENT] CHECKPOINT_GET for checkpoint ID ${checkpointId} was not marked as hit (indicator=0x${body[4].toString(16).padStart(2, '0').toUpperCase()}).`);
+				return;
+			}
+
+			const address = body.readUInt16LE(5);
+			const addressHex = `$${address.toString(16).padStart(4, '0').toUpperCase()}`;
+			this._log(`[VICE Monitor EVENT] CHECKPOINT_GET matched checkpoint ID ${checkpointId} at ${addressHex}.`);
+			this.emit('checkpointHit', { checkpointId, address } satisfies IViceCheckpointHit);
+			return;
+		}
+
 		if (responseType === VICE_MONITOR_COMMAND.EVENT_STOPPED) {
 			const pc = body.length >= 2 ? body.readUInt16LE(0) : 0;
 			const pcHex = `$${pc.toString(16).padStart(4, '0').toUpperCase()}`;
