@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as path from 'path';
 
 export interface IPrgInfo {
 	loadAddress: number;
@@ -58,6 +59,40 @@ export function parsePrgHeader(filePath: string): IPrgInfo | null {
 			details: `Failed to read PRG file: ${err?.message || err}`
 		};
 	}
+}
+
+/**
+ * Finds a label in a VICE-style label file (for example, `al 00040E .initialization`).
+ * Label files are commonly emitted beside the PRG, but may have any filename.
+ */
+export function findViceLabelAddress(programPath: string, labelName: string): number | null {
+	try {
+		const directory = path.dirname(programPath);
+		const labelFiles = fs.readdirSync(directory)
+			.filter(file => file.toLowerCase().endsWith('.lbl'));
+		const wanted = labelName.startsWith('.') ? labelName : `.${labelName}`;
+		const pattern = new RegExp(`^\\s*al\\s+([0-9a-fA-F]+)\\s+${escapeRegExp(wanted)}\\s*$`, 'i');
+
+		for (const labelFile of labelFiles) {
+			const contents = fs.readFileSync(path.join(directory, labelFile), 'utf8');
+			for (const line of contents.split(/\r?\n/)) {
+				const match = pattern.exec(line);
+				if (match) {
+					const address = parseInt(match[1], 16);
+					if (address >= 0 && address <= 0xffff) {
+						return address;
+					}
+				}
+			}
+		}
+	} catch (_err) {
+		// Label metadata is optional; the caller can fall back to the PRG address.
+	}
+	return null;
+}
+
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 interface IBasicParseResult {

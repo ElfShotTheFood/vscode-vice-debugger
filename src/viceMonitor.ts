@@ -104,6 +104,8 @@ export class ViceMonitorClient extends EventEmitter {
 	}>();
 	private _receiveBuffer = Buffer.alloc(0);
 	private _isConnected = false;
+	private _logClockWallMs: number | undefined;
+	private _logClockHrtimeNs: bigint | undefined;
 
 	public onLog?: (message: string) => void;
 
@@ -113,7 +115,28 @@ export class ViceMonitorClient extends EventEmitter {
 
 	private _log(msg: string): void {
 		if (this.onLog) {
-			this.onLog(msg.endsWith('\n') ? msg : msg + '\n');
+			// Anchor a wall-clock timestamp to a monotonic high-resolution clock.
+			// Combining Date.now() with an unrelated hrtime remainder can make
+			// timestamps appear to go backwards, especially near a millisecond
+			// boundary. The anchor preserves wall-clock time while hrtime keeps
+			// subsequent timestamps ordered and gives them microsecond precision.
+			const currentHrtimeNs = process.hrtime.bigint();
+			if (this._logClockWallMs === undefined || this._logClockHrtimeNs === undefined) {
+				this._logClockWallMs = Date.now();
+				this._logClockHrtimeNs = currentHrtimeNs;
+			}
+			const elapsedMicros = (currentHrtimeNs - this._logClockHrtimeNs) / 1000n;
+			const wallClockMicros = BigInt(this._logClockWallMs) * 1000n + elapsedMicros;
+			const seconds = wallClockMicros / 1000000n;
+			const micros = wallClockMicros % 1000000n;
+			const timestampDate = new Date(Number(seconds) * 1000);
+			const timestamp = `${timestampDate.toISOString().replace('T', ' ').replace('Z', '').slice(0, 19)}.${micros.toString().padStart(6, '0')}`;
+			const timestamped = msg.split(/(?<=\n)/).map(line => {
+				if (!line) { return line; }
+				const content = line.endsWith('\n') ? line.slice(0, -1) : line;
+				return `[${timestamp}] ${content}${line.endsWith('\n') ? '\n' : ''}`;
+			}).join('');
+			this.onLog(timestamped.endsWith('\n') ? timestamped : timestamped + '\n');
 		}
 	}
 
