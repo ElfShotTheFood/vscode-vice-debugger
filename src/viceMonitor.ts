@@ -153,7 +153,11 @@ export class ViceMonitorClient extends EventEmitter {
 				this._log(`[VICE Monitor] Connected to ${host}:${port} on attempt #${attempt}!`);
 				this.emit('connected');
 				return;
-			} catch (_err: any) {
+			} catch (err: any) {
+				const errorDetails = err instanceof Error
+					? (err.stack || `${err.name}: ${err.message}`)
+					: String(err);
+				this._log(`[VICE Monitor] Connection attempt #${attempt} failed: ${errorDetails}`);
 				await new Promise(resolve => setTimeout(resolve, retryIntervalMs));
 			}
 		}
@@ -288,7 +292,7 @@ export class ViceMonitorClient extends EventEmitter {
 		body.writeUInt16LE(address, 2);
 		body[4] = stopWhenHit ? 0x01 : 0x00;
 		body[5] = 0x01; // enabled
-		body[6] = 0x01; // CPU Exec
+		body[6] = 0x04; // CPU Exec
 		body[7] = isTemp ? 0x01 : 0x00;
 		body[8] = 0x00; // memspace (main CPU)
 

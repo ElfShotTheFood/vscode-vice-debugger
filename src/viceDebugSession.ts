@@ -61,12 +61,14 @@ export class ViceDebugSession extends LoggingDebugSession {
 			const pcHex = `$${pc.toString(16).padStart(4, '0').toUpperCase()}`;
 			this.sendEvent(new OutputEvent(`[VICE Debugger] Execution STOPPED at PC=${pcHex}\n`, 'console'));
 
-			try {
-				this._currentRegisters = await this._monitor.getRegisters();
-				this._currentPc = this._currentRegisters.pc;
-			} catch (err: any) {
-				this.sendEvent(new OutputEvent(`[VICE Debugger] Error fetching registers on stop: ${err?.message || err}\n`, 'stderr'));
-			}
+			// No need to do this, I think.  Every time the monitor stops it will automatically
+			// send registers info.
+			//try {
+			//	this._currentRegisters = await this._monitor.getRegisters();
+			//	this._currentPc = this._currentRegisters.pc;
+			//} catch (err: any) {
+			//	this.sendEvent(new OutputEvent(`[VICE Debugger] Error fetching registers on stop: ${err?.message || err}\n`, 'stderr'));
+			//}
 
 			const reason = this._waitingForEntry ? 'entry' : 'breakpoint';
 			this._waitingForEntry = false;
@@ -164,38 +166,33 @@ export class ViceDebugSession extends LoggingDebugSession {
 				},
 				(msg: string) => this.sendEvent(new OutputEvent(msg, 'console'))
 			);
-
 			// Connect to binary monitor
 			await this._monitor.connect(host, port, 12000, 500);
 			this.sendEvent(new OutputEvent('[VICE Debugger] Connected to VICE Binary Monitor.\n', 'console'));
-			const launchPingOk = await this._monitor.ping();
-			this.sendEvent(new OutputEvent(`[VICE Debugger] PING response: ${launchPingOk ? 'OK' : 'FAILED'}\n`, launchPingOk ? 'console' : 'stderr'));
+			// Give VICE a moment to finish initializing the monitor connection before
+			// issuing the first command.
+			//await new Promise(resolve => setTimeout(resolve, 1000));
+
+			//const launchPingOk = await this._monitor.ping();
+			//this.sendEvent(new OutputEvent(`[VICE Debugger] PING response: ${launchPingOk ? 'OK' : 'FAILED'}\n`, launchPingOk ? 'console' : 'stderr'));
 
 			if (!args.program) {
 				throw new Error('A PRG program path is required for launch.');
 			}
+			//await new Promise(resolve => setTimeout(resolve, 1000));
 
-			// Load without running, establish the checkpoint, then load/run again.
-			// VICE is not started with -autostart, so user code cannot run before
-			// the monitor has installed the entry checkpoint.
-			this.sendEvent(new OutputEvent('[VICE Debugger] Loading PRG without running...\n', 'console'));
-			await this._monitor.autostart(args.program, false);
-
-			if (this._stopOnDebug) {
-				this._waitingForEntry = true;
-				const checkpointHex = `$${this._checkpointAddress.toString(16).padStart(4, '0').toUpperCase()}`;
-				const checkpointKind = this._checkpointAddress === this._loadAddress ? 'load-address' : '.initialization label';
-				this.sendEvent(new OutputEvent(`[VICE Debugger] Establishing ${checkpointKind} checkpoint at ${checkpointHex} before execution...\n`, 'console'));
-				const cpId = await this._monitor.setCheckpoint(this._checkpointAddress, true, true);
-				this.sendEvent(new OutputEvent(`[VICE Debugger] Checkpoint #${cpId} established at ${checkpointHex}\n`, 'console'));
+			const checkpointHex = `$${this._checkpointAddress.toString(16).padStart(4, '0').toUpperCase()}`;
+			const checkpointKind = this._checkpointAddress === this._loadAddress ? 'load-address' : '.initialization label';
+			this.sendEvent(new OutputEvent(`[VICE Debugger] Establishing ${checkpointKind} checkpoint at ${checkpointHex} before AUTOSTART...\n`, 'console'));
+			const cpId = await this._monitor.setCheckpoint(this._checkpointAddress, this._stopOnDebug, true);
+			if (cpId <= 0) {
+				throw new Error(`VICE did not return a valid checkpoint ID for ${checkpointHex}.`);
 			}
+			this._waitingForEntry = this._stopOnDebug;
+			this.sendEvent(new OutputEvent(`[VICE Debugger] Checkpoint #${cpId} verified at ${checkpointHex}.\n`, 'console'));
 
-			if (!this._stopOnDebug) {
-				this.sendEvent(new OutputEvent('[VICE Debugger] Starting PRG execution...\n', 'console'));
-				await this._monitor.autostart(args.program, true);
-			} else {
-				this.sendEvent(new OutputEvent('[VICE Debugger] Leaving execution stopped after checkpoint establishment; no second AUTOSTART sent.\n', 'console'));
-			}
+			this.sendEvent(new OutputEvent('[VICE Debugger] Starting PRG execution with AUTOSTART(run=true)...\n', 'console'));
+			await this._monitor.autostart(args.program, true);
 
 			this.sendResponse(response);
 		} catch (err: any) {
