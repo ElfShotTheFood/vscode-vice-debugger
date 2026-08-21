@@ -409,11 +409,13 @@ export class ViceDebugSession extends LoggingDebugSession {
 					const value = register.value;
 					const width = Math.ceil(register.size / 4);
 					const isFlags = /^(FL|P|FLAGS|STATUS)$/i.test(name.trim());
-					variables.push({
-						name: `${name} [${register.id}]`,
-						value: `$${value.toString(16).padStart(width, '0').toUpperCase()} (${value})`,
-						variablesReference: isFlags ? this._variableHandles.create(`flags:${name}`) : 0
-					});
+					if (name !== '00' && name !== '01') {
+						variables.push({
+							name: `${name}`,
+							value: `$${value.toString(16).padStart(width, '0').toUpperCase()} (${value})`,
+							variablesReference: isFlags ? this._variableHandles.create(`flags:${name}`) : 0
+						});
+					}
 				}
 			} else {
 				variables.push(
@@ -435,7 +437,7 @@ export class ViceDebugSession extends LoggingDebugSession {
 				variables.push({
 					name,
 					value: (value & (1 << bit)) !== 0 ? 'set (1)' : 'clear (0)',
-					variablesReference: 0
+					variablesReference: 0  
 				});
 			}
 		}

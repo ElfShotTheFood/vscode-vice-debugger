@@ -289,10 +289,15 @@ export class ViceMonitorClient extends EventEmitter {
 			}
 			const id = resp.body[offset + 1];
 			const size = resp.body[offset + 2]; // register width in bits
+
 			// VICE includes a type byte between the width and the NUL-terminated
 			// register name. itemSize includes id, width, type, and name bytes.
 			const nameBytes = resp.body.subarray(offset + 4, offset + 1 + itemSize);
-			const definition = { id, size, name: nameBytes.toString('utf8').replace(/\0.*$/, '') };
+
+			// Replace the VICE register name 'FL' with 'P' (personal preference).
+			const registerName = nameBytes.toString('utf8').replace(/\0.*$/, '')
+			const definition = { id, size, name: registerName === 'FL' ? 'P' : registerName };
+
 			definitions.push(definition);
 			this._registerDefinitions.set(id, definition);
 			const name = definition.name.trim().toUpperCase();
