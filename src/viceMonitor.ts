@@ -384,6 +384,10 @@ export class ViceMonitorClient extends EventEmitter {
 		body[0] = memspace; // 0 = main CPU
 
 		const resp = await this.sendCommand(VICE_MONITOR_COMMAND.REGISTERS_GET, body);
+		return this._decodeRegisters(resp.body);
+	}
+
+	private _decodeRegisters(body: Buffer): IViceRegisters {
 		const result: IViceRegisters = {
 			a: 0,
 			x: 0,
@@ -395,23 +399,23 @@ export class ViceMonitorClient extends EventEmitter {
 			namedMap: new Map()
 		};
 
-		if (resp.body.length >= 2) {
-			const count = resp.body.readUInt16LE(0);
+		if (body.length >= 2) {
+			const count = body.readUInt16LE(0);
 			let offset = 2;
-			for (let i = 0; i < count && offset + 1 < resp.body.length; i++) {
-				const itemSize = resp.body[offset];
+			for (let i = 0; i < count && offset + 1 < body.length; i++) {
+				const itemSize = body[offset];
 				// The item-size byte counts the register id plus the value bytes;
 				// the size byte itself is not included in that count.
-				if (itemSize < 2 || offset + itemSize + 1 > resp.body.length) {
+				if (itemSize < 2 || offset + itemSize + 1 > body.length) {
 					break;
 				}
-				const regId = resp.body[offset + 1];
+				const regId = body[offset + 1];
 				const definition = this._registerDefinitions.get(regId);
 				const valueWidth = definition ? Math.ceil(definition.size / 8) : (itemSize - 1);
 				const valueBytes = Math.min(valueWidth, itemSize - 1, 4);
 				let regVal = 0;
-				for (let byte = 0; byte < valueBytes && offset + 2 + byte < resp.body.length; byte++) {
-					regVal |= resp.body[offset + 2 + byte] << (byte * 8);
+				for (let byte = 0; byte < valueBytes && offset + 2 + byte < body.length; byte++) {
+					regVal |= body[offset + 2 + byte] << (byte * 8);
 				}
 
 				result.rawMap.set(regId, regVal);
@@ -524,6 +528,16 @@ export class ViceMonitorClient extends EventEmitter {
 			const addressHex = `$${address.toString(16).padStart(4, '0').toUpperCase()}`;
 			this._log(`[VICE Monitor EVENT] CHECKPOINT_GET matched checkpoint ID ${checkpointId} at ${addressHex}.`);
 			this.emit('checkpointHit', { checkpointId, address } satisfies IViceCheckpointHit);
+			return;
+		}
+
+		// VICE uses RESPONSE_OK for command responses, including the unsolicited
+		// register snapshot it sends after a stop.  The request ID distinguishes
+		// that snapshot from a response to our own REGISTERS_GET request.
+		if (responseType === VICE_MONITOR_COMMAND.RESPONSE_OK && reqId === 0xffffffff) {
+			const registers = this._decodeRegisters(body);
+			this._log(`[VICE Monitor EVENT] REGISTERS_GET supplied PC=$${registers.pc.toString(16).padStart(4, '0').toUpperCase()}.`);
+			this.emit('registers', registers);
 			return;
 		}
 

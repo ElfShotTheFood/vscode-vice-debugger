@@ -46,6 +46,7 @@ export class ViceDebugSession extends LoggingDebugSession {
 	private _currentRegisters: IViceRegisters | null = null;
 	private _currentPc = 0x080d;
 	private _checkpointStopEventSent = false;
+	private _stepRequestPending = false;
 	private _debugLocations: IDebugLocation[] = [];
 	private _breakpoints = new Map<number, { sourcePath: string; line: number; checkpointId: number; address: number }>();
 	private _checkpointToBreakpoint = new Map<number, number>();
@@ -66,35 +67,46 @@ export class ViceDebugSession extends LoggingDebugSession {
 			this.sendEvent(new OutputEvent(msg, 'console'));
 		};
 
-		this._monitor.on('stopped', async ({ pc }) => {
-			this._currentPc = pc;
-			const pcHex = `$${pc.toString(16).padStart(4, '0').toUpperCase()}`;
-			this.sendEvent(new OutputEvent(`[VICE Debugger] Execution STOPPED at PC=${pcHex}\n`, 'console'));
-			// VICE may report a checkpoint hit with CHECKPOINT_GET and then also
-			// send EVENT_STOPPED. The checkpoint event already generated the DAP
-			// stop, so do not make VS Code process the same stop twice.
-			if (this._checkpointStopEventSent) {
-				this._checkpointStopEventSent = false;
-				return;
+		this._monitor.on('registers', (registers: IViceRegisters) => {
+			this._currentRegisters = registers;
+			this._currentPc = registers.pc;
+			const location = this._findLocation(this._currentPc);
+			if (location) {
+				this._currentSource = { path: location.file, line: location.line };
 			}
+		});
 
-			// No need to do this, I think.  Every time the monitor stops it will automatically
-			// send registers info.
-			//try {
-			//	this._currentRegisters = await this._monitor.getRegisters();
-			//	this._currentPc = this._currentRegisters.pc;
-			//} catch (err: any) {
-			//	this.sendEvent(new OutputEvent(`[VICE Debugger] Error fetching registers on stop: ${err?.message || err}\n`, 'stderr'));
-			//}
+		this._monitor.on('stopped', ({ pc }) => {
+			// VICE supplies post-stop registers asynchronously via REGISTERS_GET.
+			// Defer processing so a register packet in the same receive batch is
+			// dispatched before VS Code receives the stopped event.
+			this._currentPc = pc;
+			setImmediate(() => {
+				const location = this._findLocation(this._currentPc);
+				if (location) {
+					this._currentSource = { path: location.file, line: location.line };
+				}
+				const pcHex = `$${this._currentPc.toString(16).padStart(4, '0').toUpperCase()}`;
+				this.sendEvent(new OutputEvent(`[VICE Debugger] Execution STOPPED at PC=${pcHex}\n`, 'console'));
+				// VICE may report a checkpoint hit with CHECKPOINT_GET and then also
+				// send EVENT_STOPPED. The checkpoint event already generated the DAP
+				// stop, so do not make VS Code process the same stop twice.
+				if (this._checkpointStopEventSent) {
+					this._checkpointStopEventSent = false;
+					return;
+				}
 
-			const reason = this._waitingForEntry ? 'entry' : 'breakpoint';
-			this._waitingForEntry = false;
-			this.sendEvent(new StoppedEvent(reason, ViceDebugSession.THREAD_ID));
+				const reason = this._waitingForEntry ? 'entry' : (this._stepRequestPending ? 'step' : 'breakpoint');
+				this._waitingForEntry = false;
+				this._stepRequestPending = false;
+				this.sendEvent(new StoppedEvent(reason, ViceDebugSession.THREAD_ID));
+			});
 		});
 
 		this._monitor.on('checkpointHit', ({ checkpointId, address }) => {
 			this._currentPc = address;
 			this._waitingForEntry = false;
+			this._stepRequestPending = false;
 			const breakpointId = this._checkpointToBreakpoint.get(checkpointId);
 			const location = this._findLocation(address);
 			if (location) {
@@ -442,14 +454,18 @@ export class ViceDebugSession extends LoggingDebugSession {
 		response: DebugProtocol.NextResponse,
 		_args: DebugProtocol.NextArguments
 	): Promise<void> {
-		this.sendResponse(response);
 		if (this._monitor.isConnected) {
+			this._stepRequestPending = true;
 			try {
 				await this._monitor.stepInstruction(true);
+				this.sendResponse(response);
 			} catch (err: any) {
+				this._stepRequestPending = false;
 				this.sendEvent(new OutputEvent(`[VICE step error] ${err?.message || err}\n`, 'stderr'));
+				this.sendErrorResponse(response, 1003, `Step over failed: ${err?.message || err}`);
 			}
 		} else {
+			this.sendResponse(response);
 			this.sendEvent(new StoppedEvent('step', ViceDebugSession.THREAD_ID));
 		}
 	}
@@ -458,14 +474,38 @@ export class ViceDebugSession extends LoggingDebugSession {
 		response: DebugProtocol.StepInResponse,
 		_args: DebugProtocol.StepInArguments
 	): Promise<void> {
-		this.sendResponse(response);
 		if (this._monitor.isConnected) {
+			this._stepRequestPending = true;
 			try {
 				await this._monitor.stepInstruction(false);
+				this.sendResponse(response);
 			} catch (err: any) {
+				this._stepRequestPending = false;
 				this.sendEvent(new OutputEvent(`[VICE step-in error] ${err?.message || err}\n`, 'stderr'));
+				this.sendErrorResponse(response, 1004, `Step into failed: ${err?.message || err}`);
 			}
 		} else {
+			this.sendResponse(response);
+			this.sendEvent(new StoppedEvent('step', ViceDebugSession.THREAD_ID));
+		}
+	}
+
+	protected async stepOutRequest(
+		response: DebugProtocol.StepOutResponse,
+		_args: DebugProtocol.StepOutArguments
+	): Promise<void> {
+		if (this._monitor.isConnected) {
+			this._stepRequestPending = true;
+			try {
+				await this._monitor.stepOut();
+				this.sendResponse(response);
+			} catch (err: any) {
+				this._stepRequestPending = false;
+				this.sendEvent(new OutputEvent(`[VICE step-out error] ${err?.message || err}\n`, 'stderr'));
+				this.sendErrorResponse(response, 1005, `Step out failed: ${err?.message || err}`);
+			}
+		} else {
+			this.sendResponse(response);
 			this.sendEvent(new StoppedEvent('step', ViceDebugSession.THREAD_ID));
 		}
 	}
