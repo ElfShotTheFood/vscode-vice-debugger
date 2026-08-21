@@ -1,247 +1,247 @@
 {
-  "name": "vscode-vice-debugger",
-  "displayName": "VICE 6502 Debugger",
-  "version": "0.0.1",
-  "publisher": "elfshotthefood",
-  "description": "6502 assembly language debugger extension for VICE emulator and cc65 toolchain.",
-  "author": {
-    "name": "Brad"
-  },
-  "license": "MIT",
-  "engines": {
-    "vscode": "^1.74.0"
-  },
-  "categories": [
-    "Debuggers"
-  ],
-  "main": "./dist/extension.js",
-  "activationEvents": [
-    "onDebugResolve:vice",
-    "onDebugDynamicConfigurations:vice",
-    "onCommand:extension.vice-debugger.createLaunchJson"
-  ],
-  "contributes": {
-    "configuration": {
-      "title": "VICE Debugger",
-      "properties": {
-        "vice.installationDirectory": {
-          "type": "string",
-          "default": "C:\\Users\\Brad\\Downloads\\GTK3VICE-3.10-win64",
-          "description": "The installation directory of the VICE software package (without the bin subfolder). For example: C:\\Program Files\\VICE or C:\\VICE",
-          "scope": "resource"
-        }
-      }
+    "name": "vscode-vice-debugger",
+    "displayName": "VICE 6502 Debugger",
+    "version": "0.0.1",
+    "publisher": "elfshotthefood",
+    "description": "6502 assembly language debugger extension for VICE emulator and cc65 toolchain.",
+    "author": {
+        "name": "Brad"
     },
-    "commands": [
-      {
-        "command": "extension.vice-debugger.createLaunchJson",
-        "title": "Create launch.json Configuration",
-        "category": "VICE Debugger"
-      }
+    "license": "MIT",
+    "engines": {
+        "vscode": "^1.74.0"
+    },
+    "categories": [
+        "Debuggers"
     ],
-    "breakpoints": [
-      {
-        "language": "assembly"
-      },
-      {
-        "language": "asm"
-      },
-      {
-        "language": "ca65"
-      },
-      {
-        "language": "asm6502"
-      },
-      {
-        "language": "6502"
-      },
-      {
-        "language": "c"
-      }
+    "main": "./dist/extension.js",
+    "activationEvents": [
+        "onDebugResolve:vice",
+        "onDebugDynamicConfigurations:vice",
+        "onCommand:extension.vice-debugger.createLaunchJson"
     ],
-    "debuggers": [
-      {
-        "type": "vice",
-        "label": "VICE 6502 Debugger",
-        "languages": [
-          "assembly",
-          "asm",
-          "ca65",
-          "asm6502",
-          "6502",
-          "c"
-        ],
-        "configurationAttributes": {
-          "launch": {
-            "required": [],
+    "contributes": {
+        "configuration": {
+            "title": "VICE Debugger",
             "properties": {
-              "program": {
-                "type": "string",
-                "description": "Path to the PRG or binary file to debug.",
-                "default": "${workspaceFolder}/main.prg"
-              },
-              "viceExecutable": {
-                "type": "string",
-                "description": "VICE emulator executable name (e.g. x64sc, xpet, x128, xvic, xplus4, xcbm2, xcbm5x0).",
-                "default": "x64sc",
-                "enum": [
-                  "x64sc",
-                  "x64",
-                  "x128",
-                  "xpet",
-                  "xvic",
-                  "xplus4",
-                  "xcbm2",
-                  "xcbm5x0"
-                ],
-                "enumDescriptions": [
-                  "Commodore 64 (accurate)",
-                  "Commodore 64 (fast)",
-                  "Commodore 128",
-                  "Commodore PET",
-                  "Commodore VIC-20",
-                  "Commodore Plus/4, C16",
-                  "Commodore CBM-II (6x0/7x0)",
-                  "Commodore CBM-II (5x0)"
-                ]
-              },
-              "stopOnDebug": {
-                "type": "boolean",
-                "description": "Automatically pause execution at startup when debugging begins.",
-                "default": true
-              },
-              "viceHost": {
-                "type": "string",
-                "description": "Host where VICE binary monitor is running.",
-                "default": "127.0.0.1"
-              },
-              "vicePort": {
-                "type": "number",
-                "description": "Port where VICE binary monitor is listening.",
-                "default": 6510
-              },
-              "viceDirectory": {
-                "type": "string",
-                "description": "Optional override for the VICE installation directory (without the bin subfolder). Defaults to the vice.installationDirectory setting."
-              },
-              "viceArgs": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                },
-                "description": "Additional command line arguments to pass to the VICE emulator.",
-                "default": []
-              }
+                "vice.installationDirectory": {
+                    "type": "string",
+                    "default": "C:\\Users\\Brad\\Downloads\\GTK3VICE-3.10-win64",
+                    "description": "The installation directory of the VICE software package (without the bin subfolder). For example: C:\\Program Files\\VICE or C:\\VICE",
+                    "scope": "resource"
+                }
             }
-          },
-          "attach": {
-            "required": [],
-            "properties": {
-              "viceHost": {
-                "type": "string",
-                "description": "Host where VICE binary monitor is running.",
-                "default": "127.0.0.1"
-              },
-              "vicePort": {
-                "type": "number",
-                "description": "Port where VICE binary monitor is listening.",
-                "default": 6510
-              },
-              "stopOnDebug": {
-                "type": "boolean",
-                "description": "Automatically pause execution after attaching to monitor.",
-                "default": true
-              }
-            }
-          }
         },
-        "initialConfigurations": [
-          {
-            "type": "vice",
-            "request": "launch",
-            "name": "VICE: Launch & Debug (C64)",
-            "viceExecutable": "x64sc",
-            "program": "${workspaceFolder}/main.prg",
-            "stopOnDebug": true
-          }
+        "commands": [
+            {
+                "command": "extension.vice-debugger.createLaunchJson",
+                "title": "Create launch.json Configuration",
+                "category": "VICE Debugger"
+            }
         ],
-        "configurationSnippets": [
-          {
-            "label": "VICE: Launch (C64)",
-            "description": "Launch 6502 program in VICE (x64sc) and debug.",
-            "body": {
-              "type": "vice",
-              "request": "launch",
-              "name": "VICE: Launch & Debug (C64)",
-              "viceExecutable": "x64sc",
-              "program": "^\"\\${workspaceFolder}/main.prg\"",
-              "stopOnDebug": true
+        "breakpoints": [
+            {
+                "language": "assembly"
+            },
+            {
+                "language": "asm"
+            },
+            {
+                "language": "ca65"
+            },
+            {
+                "language": "asm6502"
+            },
+            {
+                "language": "6502"
+            },
+            {
+                "language": "c"
             }
-          },
-          {
-            "label": "VICE: Launch (PET)",
-            "description": "Launch 6502 program in VICE (xpet) and debug.",
-            "body": {
-              "type": "vice",
-              "request": "launch",
-              "name": "VICE: Launch & Debug (PET)",
-              "viceExecutable": "xpet",
-              "program": "^\"\\${workspaceFolder}/main.prg\"",
-              "stopOnDebug": true
+        ],
+        "debuggers": [
+            {
+                "type": "vice",
+                "label": "VICE 6502 Debugger",
+                "languages": [
+                    "assembly",
+                    "asm",
+                    "ca65",
+                    "asm6502",
+                    "6502",
+                    "c"
+                ],
+                "configurationAttributes": {
+                    "launch": {
+                        "required": [],
+                        "properties": {
+                            "program": {
+                                "type": "string",
+                                "description": "Path to the PRG or binary file to debug.",
+                                "default": "${workspaceFolder}/main.prg"
+                            },
+                            "viceExecutable": {
+                                "type": "string",
+                                "description": "VICE emulator executable name (e.g. x64sc, xpet, x128, xvic, xplus4, xcbm2, xcbm5x0).",
+                                "default": "x64sc",
+                                "enum": [
+                                    "x64sc",
+                                    "x64",
+                                    "x128",
+                                    "xpet",
+                                    "xvic",
+                                    "xplus4",
+                                    "xcbm2",
+                                    "xcbm5x0"
+                                ],
+                                "enumDescriptions": [
+                                    "Commodore 64 (accurate)",
+                                    "Commodore 64 (fast)",
+                                    "Commodore 128",
+                                    "Commodore PET",
+                                    "Commodore VIC-20",
+                                    "Commodore Plus/4, C16",
+                                    "Commodore CBM-II (6x0/7x0)",
+                                    "Commodore CBM-II (5x0)"
+                                ]
+                            },
+                            "stopOnDebug": {
+                                "type": "boolean",
+                                "description": "Automatically pause execution at startup when debugging begins.",
+                                "default": true
+                            },
+                            "viceHost": {
+                                "type": "string",
+                                "description": "Host where VICE binary monitor is running.",
+                                "default": "127.0.0.1"
+                            },
+                            "vicePort": {
+                                "type": "number",
+                                "description": "Port where VICE binary monitor is listening.",
+                                "default": 6510
+                            },
+                            "viceDirectory": {
+                                "type": "string",
+                                "description": "Optional override for the VICE installation directory (without the bin subfolder). Defaults to the vice.installationDirectory setting."
+                            },
+                            "viceArgs": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                },
+                                "description": "Additional command line arguments to pass to the VICE emulator.",
+                                "default": []
+                            }
+                        }
+                    },
+                    "attach": {
+                        "required": [],
+                        "properties": {
+                            "viceHost": {
+                                "type": "string",
+                                "description": "Host where VICE binary monitor is running.",
+                                "default": "127.0.0.1"
+                            },
+                            "vicePort": {
+                                "type": "number",
+                                "description": "Port where VICE binary monitor is listening.",
+                                "default": 6510
+                            },
+                            "stopOnDebug": {
+                                "type": "boolean",
+                                "description": "Automatically pause execution after attaching to monitor.",
+                                "default": true
+                            }
+                        }
+                    }
+                },
+                "initialConfigurations": [
+                    {
+                        "type": "vice",
+                        "request": "launch",
+                        "name": "VICE: Launch & Debug (C64)",
+                        "viceExecutable": "x64sc",
+                        "program": "${workspaceFolder}/main.prg",
+                        "stopOnDebug": true
+                    }
+                ],
+                "configurationSnippets": [
+                    {
+                        "label": "VICE: Launch (C64)",
+                        "description": "Launch 6502 program in VICE (x64sc) and debug.",
+                        "body": {
+                            "type": "vice",
+                            "request": "launch",
+                            "name": "VICE: Launch & Debug (C64)",
+                            "viceExecutable": "x64sc",
+                            "program": "^\"\\${workspaceFolder}/main.prg\"",
+                            "stopOnDebug": true
+                        }
+                    },
+                    {
+                        "label": "VICE: Launch (PET)",
+                        "description": "Launch 6502 program in VICE (xpet) and debug.",
+                        "body": {
+                            "type": "vice",
+                            "request": "launch",
+                            "name": "VICE: Launch & Debug (PET)",
+                            "viceExecutable": "xpet",
+                            "program": "^\"\\${workspaceFolder}/main.prg\"",
+                            "stopOnDebug": true
+                        }
+                    },
+                    {
+                        "label": "VICE: Launch (VIC-20)",
+                        "description": "Launch 6502 program in VICE (xvic) and debug.",
+                        "body": {
+                            "type": "vice",
+                            "request": "launch",
+                            "name": "VICE: Launch & Debug (VIC-20)",
+                            "viceExecutable": "xvic",
+                            "program": "^\"\\${workspaceFolder}/main.prg\"",
+                            "stopOnDebug": true
+                        }
+                    },
+                    {
+                        "label": "VICE: Launch (C128)",
+                        "description": "Launch 6502 program in VICE (x128) and debug.",
+                        "body": {
+                            "type": "vice",
+                            "request": "launch",
+                            "name": "VICE: Launch & Debug (C128)",
+                            "viceExecutable": "x128",
+                            "program": "^\"\\${workspaceFolder}/main.prg\"",
+                            "stopOnDebug": true
+                        }
+                    },
+                    {
+                        "label": "VICE: Attach",
+                        "description": "Attach to an existing running VICE monitor.",
+                        "body": {
+                            "type": "vice",
+                            "request": "attach",
+                            "name": "VICE: Attach to Monitor",
+                            "viceHost": "127.0.0.1",
+                            "vicePort": 6510,
+                            "stopOnDebug": true
+                        }
+                    }
+                ]
             }
-          },
-          {
-            "label": "VICE: Launch (VIC-20)",
-            "description": "Launch 6502 program in VICE (xvic) and debug.",
-            "body": {
-              "type": "vice",
-              "request": "launch",
-              "name": "VICE: Launch & Debug (VIC-20)",
-              "viceExecutable": "xvic",
-              "program": "^\"\\${workspaceFolder}/main.prg\"",
-              "stopOnDebug": true
-            }
-          },
-          {
-            "label": "VICE: Launch (C128)",
-            "description": "Launch 6502 program in VICE (x128) and debug.",
-            "body": {
-              "type": "vice",
-              "request": "launch",
-              "name": "VICE: Launch & Debug (C128)",
-              "viceExecutable": "x128",
-              "program": "^\"\\${workspaceFolder}/main.prg\"",
-              "stopOnDebug": true
-            }
-          },
-          {
-            "label": "VICE: Attach",
-            "description": "Attach to an existing running VICE monitor.",
-            "body": {
-              "type": "vice",
-              "request": "attach",
-              "name": "VICE: Attach to Monitor",
-              "viceHost": "127.0.0.1",
-              "vicePort": 6510,
-              "stopOnDebug": true
-            }
-          }
         ]
-      }
-    ]
-  },
-  "scripts": {
-    "compile": "tsc -p ./",
-    "watch": "esbuild ./src/extension.ts --bundle --tsconfig=./tsconfig.json --external:vscode --format=cjs --platform=node --outfile=dist/extension.js --sourcemap --watch",
-    "build": "esbuild ./src/extension.ts --bundle --tsconfig=./tsconfig.json --external:vscode --format=cjs --platform=node --outfile=dist/extension.js --sourcemap",
-    "vscode:prepublish": "esbuild ./src/extension.ts --bundle --tsconfig=./tsconfig.json --external:vscode --format=cjs --platform=node --outfile=dist/extension.js --minify"
-  },
-  "devDependencies": {
-    "@types/node": "^18.19.0",
-    "@types/vscode": "^1.74.0",
-    "@vscode/debugadapter": "^1.65.0",
-    "@vscode/debugprotocol": "^1.65.0",
-    "esbuild": "^0.20.0",
-    "typescript": "^5.3.3"
-  }
+    },
+    "scripts": {
+        "compile": "tsc -p ./",
+        "watch": "esbuild ./src/extension.ts --bundle --tsconfig=./tsconfig.json --external:vscode --format=cjs --platform=node --outfile=dist/extension.js --sourcemap --watch",
+        "build": "esbuild ./src/extension.ts --bundle --tsconfig=./tsconfig.json --external:vscode --format=cjs --platform=node --outfile=dist/extension.js --sourcemap",
+        "vscode:prepublish": "esbuild ./src/extension.ts --bundle --tsconfig=./tsconfig.json --external:vscode --format=cjs --platform=node --outfile=dist/extension.js --minify"
+    },
+    "devDependencies": {
+        "@types/node": "^18.19.0",
+        "@types/vscode": "^1.74.0",
+        "@vscode/debugadapter": "^1.65.0",
+        "@vscode/debugprotocol": "^1.65.0",
+        "esbuild": "^0.20.0",
+        "typescript": "^5.3.3"
+    }
 }
