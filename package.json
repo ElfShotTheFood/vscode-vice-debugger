@@ -44,6 +44,18 @@
         "language": "assembly"
       },
       {
+        "language": "asm"
+      },
+      {
+        "language": "ca65"
+      },
+      {
+        "language": "asm6502"
+      },
+      {
+        "language": "6502"
+      },
+      {
         "language": "c"
       }
     ],
@@ -53,6 +65,10 @@
         "label": "VICE 6502 Debugger",
         "languages": [
           "assembly",
+          "asm",
+          "ca65",
+          "asm6502",
+          "6502",
           "c"
         ],
         "configurationAttributes": {

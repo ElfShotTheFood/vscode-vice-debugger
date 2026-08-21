@@ -1,6 +1,7 @@
 import {
 	LoggingDebugSession,
 	InitializedEvent,
+	BreakpointEvent,
 	StoppedEvent,
 	OutputEvent,
 	Thread,
@@ -51,6 +52,7 @@ export class ViceDebugSession extends LoggingDebugSession {
 	private _breakpoints = new Map<number, { sourcePath: string; line: number; checkpointId: number; address: number }>();
 	private _checkpointToBreakpoint = new Map<number, number>();
 	private _pendingBreakpointRequests = new Map<string, DebugProtocol.SourceBreakpoint[]>();
+	private _pendingBreakpointIds = new Map<string, number[]>();
 	private _currentSource: { path: string; line: number } | null = null;
 	private _nextBreakpointId = 1;
 
@@ -307,10 +309,18 @@ export class ViceDebugSession extends LoggingDebugSession {
 		this._pendingBreakpointRequests.set(sourcePath, clientBreakpoints);
 		const actualBreakpoints: DebugProtocol.Breakpoint[] = [];
 		if (this._monitor.isConnected) {
+			this._pendingBreakpointIds.delete(sourcePath);
 			actualBreakpoints.push(...await this._replaceBreakpoints(sourcePath, clientBreakpoints));
 		} else {
+			const breakpointIds = clientBreakpoints.map(() => this._nextBreakpointId++);
+			this._pendingBreakpointIds.set(sourcePath, breakpointIds);
 			for (const bp of clientBreakpoints) {
-				actualBreakpoints.push({ verified: false, line: bp.line, message: 'Waiting for VICE monitor connection.' });
+				actualBreakpoints.push({
+					id: breakpointIds[actualBreakpoints.length],
+					verified: false,
+					line: bp.line,
+					message: 'Waiting for VICE monitor connection.'
+				});
 			}
 		}
 		response.body = { breakpoints: actualBreakpoints };
@@ -539,6 +549,8 @@ export class ViceDebugSession extends LoggingDebugSession {
 	}
 
 	private async _replaceBreakpoints(sourcePath: string, requested: DebugProtocol.SourceBreakpoint[]): Promise<DebugProtocol.Breakpoint[]> {
+		const pendingIds = this._pendingBreakpointIds.get(sourcePath);
+		this._pendingBreakpointIds.delete(sourcePath);
 		for (const [dapId, breakpoint] of this._breakpoints) {
 			if (this._samePath(breakpoint.sourcePath, sourcePath)) {
 				try { await this._monitor.deleteCheckpoint(breakpoint.checkpointId); } catch {}
@@ -550,7 +562,7 @@ export class ViceDebugSession extends LoggingDebugSession {
 		const result: DebugProtocol.Breakpoint[] = [];
 		for (const requestedBreakpoint of requested) {
 			const location = this._findSourceLocation(sourcePath, requestedBreakpoint.line);
-			const dapId = this._nextBreakpointId++;
+			const dapId = pendingIds?.[result.length] ?? this._nextBreakpointId++;
 			if (!location) {
 				result.push({ id: dapId, verified: false, line: requestedBreakpoint.line, message: 'No address for this source line in the cc65 .dbg file.' });
 				continue;
@@ -570,6 +582,13 @@ export class ViceDebugSession extends LoggingDebugSession {
 	private async _installPendingBreakpoints(): Promise<void> {
 		for (const [sourcePath, requested] of this._pendingBreakpointRequests) {
 			const breakpoints = await this._replaceBreakpoints(sourcePath, requested);
+			// VS Code sends source breakpoints during the configuration phase,
+			// before launch has connected to VICE.  The initial response therefore
+			// reports them as pending; notify the client when their VICE checkpoints
+			// have been created so the source margin changes to the verified state.
+			for (const breakpoint of breakpoints) {
+				this.sendEvent(new BreakpointEvent('changed', breakpoint));
+			}
 			this.sendEvent(new OutputEvent(`[VICE Debugger] Installed ${breakpoints.filter(bp => bp.verified).length} source breakpoint(s) for ${sourcePath}.\n`, 'console'));
 		}
 	}
