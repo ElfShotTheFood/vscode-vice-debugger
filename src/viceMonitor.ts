@@ -539,7 +539,7 @@ export class ViceMonitorClient extends EventEmitter {
 		// VICE uses RESPONSE_OK for command responses, including the unsolicited
 		// register snapshot it sends after a stop.  The request ID distinguishes
 		// that snapshot from a response to our own REGISTERS_GET request.
-		if (responseType === VICE_MONITOR_COMMAND.RESPONSE_OK && reqId === 0xffffffff) {
+		if (responseType === VICE_MONITOR_COMMAND.REGISTERS_GET && reqId === 0xffffffff) {
 			const registers = this._decodeRegisters(body);
 			this._log(`[VICE Monitor EVENT] REGISTERS_GET supplied PC=$${registers.pc.toString(16).padStart(4, '0').toUpperCase()}.`);
 			this.emit('registers', registers);
