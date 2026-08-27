@@ -46,7 +46,7 @@ export class ViceDebugSession extends LoggingDebugSession {
 	private _waitingForEntry = false;
 	private _currentRegisters: IViceRegisters | null = null;
 	private _currentPc = 0x080d;
-	private _checkpointStopEventSent = false;
+	//private _checkpointStopEventSent = false;
 	private _stepRequestPending = false;
 	private _debugLocations: IDebugLocation[] = [];
 	private _breakpoints = new Map<number, { sourcePath: string; line: number; checkpointId: number; address: number }>();
@@ -93,10 +93,10 @@ export class ViceDebugSession extends LoggingDebugSession {
 				// VICE may report a checkpoint hit with CHECKPOINT_GET and then also
 				// send EVENT_STOPPED. The checkpoint event already generated the DAP
 				// stop, so do not make VS Code process the same stop twice.
-				if (this._checkpointStopEventSent) {
-					this._checkpointStopEventSent = false;
-					return;
-				}
+				//if (this._checkpointStopEventSent) {
+				//	this._checkpointStopEventSent = false;
+				//	return;
+				//}
 
 				const reason = this._waitingForEntry ? 'entry' : (this._stepRequestPending ? 'step' : 'breakpoint');
 				this._waitingForEntry = false;
@@ -130,7 +130,7 @@ export class ViceDebugSession extends LoggingDebugSession {
 			if (breakpointId !== undefined) {
 				stoppedBody.hitBreakpointIds = [breakpointId];
 			}
-			this._checkpointStopEventSent = true;
+			//this._checkpointStopEventSent = true;
 			this.sendEvent(stoppedEvent);
 		});
 

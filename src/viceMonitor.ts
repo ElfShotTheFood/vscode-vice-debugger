@@ -345,7 +345,7 @@ export class ViceMonitorClient extends EventEmitter {
 		// 2..3: end_addr (uint16 LE)
 		// 4: stop_when_hit (uint8)
 		// 5: enabled (uint8)
-		// 6: cpu_operation (uint8: 1=exec, 2=load, 4=store)
+		// 6: cpu_operation (uint8: 1=load, 2=store, 4=exec)
 		// 7: temporary (uint8)
 		// 8: memspace (uint8: 0=main CPU)
 		const body = Buffer.alloc(9);
@@ -536,7 +536,7 @@ export class ViceMonitorClient extends EventEmitter {
 			return;
 		}
 
-		// VICE uses RESPONSE_OK for command responses, including the unsolicited
+		// VICE uses RESPONSE_GET to handle the unsolicited
 		// register snapshot it sends after a stop.  The request ID distinguishes
 		// that snapshot from a response to our own REGISTERS_GET request.
 		if (responseType === VICE_MONITOR_COMMAND.REGISTERS_GET && reqId === 0xffffffff) {
@@ -549,7 +549,7 @@ export class ViceMonitorClient extends EventEmitter {
 		if (responseType === VICE_MONITOR_COMMAND.EVENT_STOPPED) {
 			const pc = body.length >= 2 ? body.readUInt16LE(0) : 0;
 			const pcHex = `$${pc.toString(16).padStart(4, '0').toUpperCase()}`;
-			this._log(`[VICE Monitor EVENT] EVENT_STOPPED (0xEF) at PC=${pcHex}`);
+			this._log(`[VICE Monitor EVENT] EVENT_STOPPED (0x${VICE_MONITOR_COMMAND.EVENT_STOPPED.toString(16).padStart(2, '0').toUpperCase()}) at PC=${pcHex}`);
 			this.emit('stopped', { pc });
 			return;
 		}
@@ -557,7 +557,7 @@ export class ViceMonitorClient extends EventEmitter {
 		if (responseType === VICE_MONITOR_COMMAND.EVENT_RESUMED) {
 			const pc = body.length >= 2 ? body.readUInt16LE(0) : 0;
 			const pcHex = `$${pc.toString(16).padStart(4, '0').toUpperCase()}`;
-			this._log(`[VICE Monitor EVENT] EVENT_RESUMED (0xF1) at PC=${pcHex}`);
+			this._log(`[VICE Monitor EVENT] EVENT_RESUMED (0x${VICE_MONITOR_COMMAND.EVENT_RESUMED.toString(16).padStart(2, '0').toUpperCase()}) at PC=${pcHex}`);
 			this.emit('resumed', { pc });
 			return;
 		}
@@ -565,7 +565,7 @@ export class ViceMonitorClient extends EventEmitter {
 		if (responseType === VICE_MONITOR_COMMAND.EVENT_JAM) {
 			const pc = body.length >= 2 ? body.readUInt16LE(0) : 0;
 			const pcHex = `$${pc.toString(16).padStart(4, '0').toUpperCase()}`;
-			this._log(`[VICE Monitor EVENT] EVENT_JAM (0xEE) at PC=${pcHex}`);
+			this._log(`[VICE Monitor EVENT] EVENT_JAM (0x${VICE_MONITOR_COMMAND.EVENT_JAM.toString(16).padStart(2, '0').toUpperCase()}) at PC=${pcHex}`);
 			this.emit('jam', { pc });
 			return;
 		}
