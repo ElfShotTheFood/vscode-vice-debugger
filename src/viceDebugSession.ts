@@ -11,9 +11,11 @@ import {
 	Source
 } from '@vscode/debugadapter';
 import * as path from 'path';
+import { EventEmitter } from 'events';
 import { DebugProtocol } from '@vscode/debugprotocol';
-import { ViceMonitorClient, ViceProcessLauncher, IViceRegisters } from './viceMonitor';
+import { ViceMonitorClient, ViceProcessLauncher, IViceRegisters, IViceRegisterDefinition } from './viceMonitor';
 import { findViceLabelAddress, parseCc65DebugFile, parsePrgHeader, IDebugLocation } from './prgReader';
+import { IViceDebuggerServices, IDisposable, DebuggerEvent } from './sessionRegistry';
 
 export interface IViceLaunchRequestArguments extends DebugProtocol.LaunchRequestArguments {
 	program?: string;
@@ -55,6 +57,7 @@ export class ViceDebugSession extends LoggingDebugSession {
 	private _pendingBreakpointIds = new Map<string, number[]>();
 	private _currentSource: { path: string; line: number } | null = null;
 	private _nextBreakpointId = 1;
+	private _debuggerEvents = new EventEmitter();
 
 	public constructor() {
 		super('vice-debug.txt');
@@ -76,6 +79,7 @@ export class ViceDebugSession extends LoggingDebugSession {
 			if (location) {
 				this._currentSource = { path: location.file, line: location.line };
 			}
+			this._emitDebuggerEvent('registers', registers);
 		});
 
 		this._monitor.on('stopped', ({ pc }) => {
@@ -101,6 +105,7 @@ export class ViceDebugSession extends LoggingDebugSession {
 				const reason = this._waitingForEntry ? 'entry' : (this._stepRequestPending ? 'step' : 'breakpoint');
 				this._waitingForEntry = false;
 				this._stepRequestPending = false;
+				this._emitDebuggerEvent('stopped', { pc: this._currentPc });
 				this.sendEvent(new StoppedEvent(reason, ViceDebugSession.THREAD_ID));
 			});
 		});
@@ -119,6 +124,7 @@ export class ViceDebugSession extends LoggingDebugSession {
 				`[VICE Debugger] Recognized checkpoint #${checkpointId} hit at ${addressHex}; notifying VS Code.\n`,
 				'console'
 			));
+			this._emitDebuggerEvent('stopped', { pc: address });
 
 			// DAP's hitBreakpointIds tells VS Code which breakpoint caused the
 			// stop. Use the VICE checkpoint ID as the stable ID for this internal
@@ -138,17 +144,20 @@ export class ViceDebugSession extends LoggingDebugSession {
 			this._currentPc = pc;
 			const pcHex = `$${pc.toString(16).padStart(4, '0').toUpperCase()}`;
 			this.sendEvent(new OutputEvent(`[VICE Debugger] Execution RESUMED from PC=${pcHex}\n`, 'console'));
+			this._emitDebuggerEvent('resumed', { pc });
 		});
 
 		this._monitor.on('jam', ({ pc }) => {
 			this._currentPc = pc;
 			const pcHex = `$${pc.toString(16).padStart(4, '0').toUpperCase()}`;
 			this.sendEvent(new OutputEvent(`[VICE Debugger] CPU JAMMED at PC=${pcHex}\n`, 'stderr'));
+			this._emitDebuggerEvent('jam', { pc });
 			this.sendEvent(new StoppedEvent('exception', ViceDebugSession.THREAD_ID));
 		});
 
 		this._monitor.on('disconnected', () => {
 			this.sendEvent(new OutputEvent('[VICE Debugger] Monitor socket disconnected.\n', 'console'));
+			this._emitDebuggerEvent('disconnected', undefined);
 		});
 
 		this._monitor.on('error', (err: Error) => {
@@ -530,6 +539,54 @@ export class ViceDebugSession extends LoggingDebugSession {
 		this._launcher.terminate();
 		this.sendEvent(new OutputEvent('[VICE Debugger] Session terminated.\n', 'console'));
 		this.sendResponse(response);
+	}
+
+	// ------------------------------------------------------------------
+	// Services facade for webview panels (see sessionRegistry.ts).
+	// ------------------------------------------------------------------
+
+	private _emitDebuggerEvent(event: DebuggerEvent, payload: any): void {
+		this._debuggerEvents.emit('event', event, payload);
+	}
+
+	public get isConnected(): boolean {
+		return this._monitor.isConnected;
+	}
+
+	public async getRegisters(): Promise<IViceRegisters> {
+		return this._monitor.getRegisters();
+	}
+
+	public getRegisterDefinitions(): IViceRegisterDefinition[] {
+		return this._monitor.registerDefinitions;
+	}
+
+	public async setRegisterByName(name: string, value: number): Promise<void> {
+		const regId = this._monitor.getRegisterIdByName(name);
+		if (regId === undefined) {
+			throw new Error(`Unknown register '${name}'.`);
+		}
+		await this._monitor.setRegister(regId, value);
+	}
+
+	public async getMemory(startAddr: number, endAddr: number): Promise<Buffer> {
+		return this._monitor.getMemory(startAddr, endAddr);
+	}
+
+	public async setMemory(address: number, data: Buffer): Promise<void> {
+		await this._monitor.setMemory(address, data);
+	}
+
+	public onDebuggerEvent(listener: (event: DebuggerEvent, payload: any) => void): IDisposable {
+		this._debuggerEvents.on('event', listener);
+		return {
+			dispose: () => this._debuggerEvents.off('event', listener)
+		};
+	}
+
+	/** View of this session suitable for registration in the session registry. */
+	public get services(): IViceDebuggerServices {
+		return this;
 	}
 
 	private _sourcePath(source: DebugProtocol.Source): string {

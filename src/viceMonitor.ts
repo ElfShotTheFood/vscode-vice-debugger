@@ -310,6 +310,16 @@ export class ViceMonitorClient extends EventEmitter {
 		return definitions;
 	}
 
+	/** Definitions discovered by the most recent getAvailableRegisters() call. */
+	public get registerDefinitions(): IViceRegisterDefinition[] {
+		return Array.from(this._registerDefinitions.values());
+	}
+
+	/** Look up a register id by (case-insensitive) name, e.g. 'PC' or 'P'. */
+	public getRegisterIdByName(name: string): number | undefined {
+		return this._registerIdsByName.get(name.trim().toUpperCase());
+	}
+
 	public async exitMonitor(): Promise<void> {
 		await this.sendCommand(VICE_MONITOR_COMMAND.EXIT_MONITOR);
 	}
@@ -337,6 +347,27 @@ export class ViceMonitorClient extends EventEmitter {
 
 	public async stepOut(): Promise<void> {
 		await this.sendCommand(VICE_MONITOR_COMMAND.EXECUTE_UNTIL_RETURN);
+	}
+
+	/**
+	 * Write register values via REGISTERS_SET.
+	 *
+	 * Body layout (per VICE monitor_binary.c):
+	 *   0:      memspace
+	 *   1..2:   register count (uint16 LE)
+	 *   then per register an item of:
+	 *     +0:   item size (uint8; counts the id plus the 2 value bytes, so 3)
+	 *     +1:   register id (uint8)
+	 *     +2..3: value (uint16 LE; VICE always reads 2 bytes)
+	 */
+	public async setRegister(regId: number, value: number, memspace = 0): Promise<void> {
+		const body = Buffer.alloc(3 + 4);
+		body[0] = memspace;
+		body.writeUInt16LE(1, 1); // one register
+		body[3] = 3;              // item size: id + 2 value bytes
+		body[4] = regId;
+		body.writeUInt16LE(value & 0xffff, 5);
+		await this.sendCommand(VICE_MONITOR_COMMAND.REGISTERS_SET, body);
 	}
 
 	public async setCheckpoint(address: number, stopWhenHit = true, isTemp = false): Promise<number> {
@@ -461,6 +492,32 @@ export class ViceMonitorClient extends EventEmitter {
 			return resp.body.subarray(2, 2 + length);
 		}
 		return Buffer.alloc(0);
+	}
+
+	/**
+	 * Write bytes to emulated memory via MEMORY_SET.
+	 *
+	 * MEMORY_SET uses the same 8-byte header as MEMORY_GET:
+	 *   0:     sidefx flag
+	 *   1..2:  start address (uint16 LE)
+	 *   3..4:  end address (uint16 LE, inclusive)
+	 *   5:     memspace
+	 *   6..7:  bank id (uint16 LE)
+	 * followed by the data bytes.
+	 */
+	public async setMemory(startAddr: number, data: Buffer, memspace = 0, bankId = 0): Promise<void> {
+		if (data.length === 0) {
+			return;
+		}
+		const endAddr = (startAddr + data.length - 1) & 0xffff;
+		const body = Buffer.alloc(8 + data.length);
+		body[0] = 0x00; // sidefx = false
+		body.writeUInt16LE(startAddr & 0xffff, 1);
+		body.writeUInt16LE(endAddr, 3);
+		body[5] = memspace;
+		body.writeUInt16LE(bankId, 6);
+		data.copy(body, 8);
+		await this.sendCommand(VICE_MONITOR_COMMAND.MEMORY_SET, body);
 	}
 
 	private _onDataReceived(chunk: Buffer): void {

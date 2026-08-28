@@ -1,10 +1,15 @@
 import * as vscode from 'vscode';
 import { ViceDebugSession } from './viceDebugSession';
+import { registerDebuggerServices, unregisterDebuggerServices, getDebuggerServices } from './sessionRegistry';
+import { VicePanelManager } from './panelManager';
 
 export function activate(context: vscode.ExtensionContext) {
 	// Register configuration provider
 	const provider = new ViceConfigurationProvider();
 	context.subscriptions.push(vscode.debug.registerDebugConfigurationProvider('vice', provider));
+
+	// Webview panel manager for the registers / memory windows
+	const panelManager = new VicePanelManager();
 
 	// Register dynamic configuration provider for VS Code menus
 	context.subscriptions.push(
@@ -39,6 +44,47 @@ export function activate(context: vscode.ExtensionContext) {
 	// Register inline debug adapter factory
 	const factory = new ViceDebugAdapterFactory();
 	context.subscriptions.push(vscode.debug.registerDebugAdapterDescriptorFactory('vice', factory));
+
+	// Track session lifetime: register services for webview panels and clean
+	// up panels when the session ends.
+	context.subscriptions.push(vscode.debug.onDidTerminateDebugSession(session => {
+		unregisterDebuggerServices(session.id);
+		panelManager.closeSession(session.id);
+	}));
+
+	const withActiveSession = (run: (sessionId: string) => void): void => {
+		const session = vscode.debug.activeDebugSession;
+		if (!session || session.type !== 'vice') {
+			vscode.window.showErrorMessage('No active VICE debug session. Start a debug session first.');
+			return;
+		}
+		if (!getDebuggerServices(session.id)) {
+			vscode.window.showErrorMessage('VICE debug services are not available for the active session yet.');
+			return;
+		}
+		run(session.id);
+	};
+
+	context.subscriptions.push(vscode.commands.registerCommand('extension.vice-debugger.showRegisters', () => {
+		withActiveSession(sessionId => {
+			const services = getDebuggerServices(sessionId)!;
+			panelManager.showRegisters(sessionId, services);
+		});
+	}));
+
+	context.subscriptions.push(vscode.commands.registerCommand('extension.vice-debugger.showMemory', () => {
+		withActiveSession(sessionId => {
+			const services = getDebuggerServices(sessionId)!;
+			panelManager.showMemory(sessionId, services);
+		});
+	}));
+
+	context.subscriptions.push(vscode.commands.registerCommand('extension.vice-debugger.newMemoryWindow', () => {
+		withActiveSession(sessionId => {
+			const services = getDebuggerServices(sessionId)!;
+			panelManager.showMemory(sessionId, services, { newWindow: true });
+		});
+	}));
 
 	// Register command to explicitly generate / create launch.json for a 6502 project
 	context.subscriptions.push(
@@ -113,9 +159,12 @@ class ViceConfigurationProvider implements vscode.DebugConfigurationProvider {
 
 class ViceDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
 	createDebugAdapterDescriptor(
-		_session: vscode.DebugSession
+		session: vscode.DebugSession
 	): vscode.ProviderResult<vscode.DebugAdapterDescriptor> {
-		return new vscode.DebugAdapterInlineImplementation(new ViceDebugSession());
+		const debugSession = new ViceDebugSession();
+		// Expose the session's monitor-backed services to webview panels.
+		registerDebuggerServices(session.id, debugSession.services);
+		return new vscode.DebugAdapterInlineImplementation(debugSession);
 	}
 }
 
