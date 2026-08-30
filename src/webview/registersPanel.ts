@@ -60,12 +60,20 @@ export class RegistersPanel extends ViceWebviewPanel {
 
 	protected _getHtml(_webview: vscode.Webview): string {
 		const body = `
+	<style>
+		/* Shift the whole register table right by ~2 characters. */
+		#regTable { margin-left: 16px; }
+		/* Halve the shared cell padding between labels and edit boxes. */
+		#regTable td { padding-right: 5px; }
+		/* Extra gap between the left and right register columns. */
+		#regTable td:nth-child(3) { padding-left: 30px; }
+	</style>
 	<table id="regTable"></table>`;
 		const script = `
 	var vscodeApi = acquireVsCodeApi();
 	var running = false;
-	var LEFT_COLUMN = ['PC', 'A', 'X', 'Y', 'SP', 'P'];
-	var RIGHT_COLUMN = ['00', '01', 'LIN', 'CYC'];
+	var LEFT_COLUMN = ['PC', 'A', 'X', 'Y', 'SP', '', '00', '01', 'LIN', 'CYC'];
+	var FLAG_NAMES = ['N', 'V', '-', 'B', 'D', 'I', 'Z', 'C'];
 
 	function post(type, payload) { vscodeApi.postMessage({ type: type, payload: payload }); }
 
@@ -118,72 +126,95 @@ export class RegistersPanel extends ViceWebviewPanel {
 		});
 		input.addEventListener('keydown', function (e) {
 			if (e.key === 'Enter') { commit(input, row); }
+			else if (e.key === 'Escape') {
+				// Discard edits and restore the register's original value.
+				input.value = hex(row.value, row.size);
+				input.blur();
+			}
 		});
 		input.addEventListener('blur', function () { input.value = hex(row.value, row.size); });
 		td.appendChild(input);
 		return td;
 	}
 
-	function appendFlagsRow(table, row) {
-		var flagTr = document.createElement('tr');
-		var flagTd = document.createElement('td');
-		flagTd.colSpan = 4;
-		['N', 'V', '-', 'B', 'D', 'I', 'Z', 'C'].forEach(function (flagName, index) {
-			var bit = 7 - index;
-			var label = document.createElement('label');
-			label.style.marginRight = '10px';
-			var checkbox = document.createElement('input');
-			checkbox.type = 'checkbox';
-			checkbox.disabled = running;
-			checkbox.checked = (row.value & (1 << bit)) !== 0;
-			checkbox.addEventListener('change', function () {
-				var newValue = checkbox.checked ? (row.value | (1 << bit)) : (row.value & ~(1 << bit));
-				post('setRegister', { name: row.name, value: newValue & 0xff });
-			});
-			label.appendChild(checkbox);
-			label.appendChild(document.createTextNode(' ' + flagName));
-			flagTd.appendChild(label);
+	function makeFlagCell(flagsRow, flagName, bit) {
+		var td = document.createElement('td');
+		var label = document.createElement('td');
+		label.textContent = flagName;
+		var input = document.createElement('input');
+		var flagValue = function () { return (flagsRow.value & (1 << bit)) !== 0 ? '1' : '0'; };
+		input.value = flagValue();
+		input.size = 1;
+		input.maxLength = 1;
+		input.disabled = running;
+		// Accept only 0 or 1; the typed digit replaces the existing one.
+		input.addEventListener('keydown', function (e) {
+			if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+				if (e.key !== '0' && e.key !== '1') { e.preventDefault(); return; }
+				e.preventDefault();
+				input.value = e.key;
+				input.setSelectionRange(1, 1);
+			}
 		});
-		flagTr.appendChild(flagTd);
-		table.appendChild(flagTr);
+		input.addEventListener('keydown', function (e) {
+			if (e.key === 'Enter') { commitFlag(input, flagsRow, bit); }
+			else if (e.key === 'Escape') {
+				// Discard edits and restore the flag's original value.
+				input.value = flagValue();
+				input.blur();
+			}
+		});
+		input.addEventListener('blur', function () { input.value = flagValue(); });
+		td.appendChild(input);
+		return { labelTd: label, valueTd: td };
 	}
 
 	function render(rows) {
 		var table = document.getElementById('regTable');
 		table.innerHTML = '';
 
-		// Left column: main CPU registers in fixed order. Right column: chip
-		// registers, plus anything not covered by the fixed lists.
+		// Left column: main CPU registers in fixed order ('' = blank row).
+		// Right column: the P register followed by one row per status flag.
 		var left = [];
 		LEFT_COLUMN.forEach(function (name) {
-			var row = findRow(rows, name);
-			if (row) { left.push(row); }
+			left.push(name ? findRow(rows, name) : null);
 		});
-		var right = [];
-		RIGHT_COLUMN.forEach(function (name) {
-			var row = findRow(rows, name);
-			if (row) { right.push(row); }
-		});
-		rows.forEach(function (row) {
-			if (left.indexOf(row) === -1 && right.indexOf(row) === -1) { right.push(row); }
-		});
+		var flagsRow = findRow(rows, 'P');
 
-		var rowCount = Math.max(left.length, right.length);
+		var FLAG_NAMES = ['N', 'V', '-', 'B', 'D', 'I', 'Z', 'C'];
+
+		var rowCount = Math.max(left.length, 1 + 8); // left rows vs P + 8 flags
 		for (var i = 0; i < rowCount; i++) {
 			var tr = document.createElement('tr');
 			var leftRow = left[i];
-			var rightRow = right[i];
 
-			tr.appendChild(makeNameCell(leftRow ? leftRow.name : ''));
-			tr.appendChild(leftRow ? makeRegisterCell(leftRow) : document.createElement('td'));
-			tr.appendChild(makeNameCell(rightRow ? rightRow.name : ''));
-			tr.appendChild(rightRow ? makeRegisterCell(rightRow) : document.createElement('td'));
+			// Left column
+			if (leftRow) {
+				tr.appendChild(makeNameCell(leftRow.name));
+				tr.appendChild(makeRegisterCell(leftRow));
+			} else {
+				tr.appendChild(makeNameCell(''));
+				tr.appendChild(document.createElement('td'));
+			}
+
+			// Right column
+			var rightCells = null;
+			if (i === 0) {
+				if (flagsRow) { tr.appendChild(makeNameCell('P')); }
+				else { tr.appendChild(document.createElement('td')); }
+				tr.appendChild(flagsRow ? makeRegisterCell(flagsRow) : document.createElement('td'));
+			} else if (flagsRow) {
+				var flagIndex = i - 1; // 0..7
+				var flagName = FLAG_NAMES[flagIndex];
+				var bit = 7 - flagIndex;
+				if (flagName) {
+					var cells = makeFlagCell(flagsRow, flagName, bit);
+					tr.appendChild(cells.labelTd);
+					tr.appendChild(cells.valueTd);
+				}
+			}
 
 			table.appendChild(tr);
-
-			if (leftRow && /^(P|FL|FLAGS|STATUS)$/i.test(leftRow.name)) {
-				appendFlagsRow(table, leftRow);
-			}
 		}
 	}
 
@@ -199,6 +230,18 @@ export class RegistersPanel extends ViceWebviewPanel {
 		}
 		var mask = (1 << row.size) - 1;
 		post('setRegister', { name: row.name, value: value & mask });
+	}
+
+	function commitFlag(input, flagsRow, bit) {
+		var digit = input.value.trim();
+		if (digit !== '0' && digit !== '1') {
+			input.value = (flagsRow.value & (1 << bit)) !== 0 ? '1' : '0';
+			return;
+		}
+		var newValue = digit === '1'
+			? (flagsRow.value | (1 << bit))
+			: (flagsRow.value & ~(1 << bit));
+		post('setRegister', { name: flagsRow.name, value: newValue & 0xff });
 	}
 
 	window.addEventListener('message', function (event) {
