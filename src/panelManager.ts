@@ -56,8 +56,8 @@ export class VicePanelManager {
 		let panel = this._panels.get(key);
 		if (!panel) {
 			const title = key.endsWith(':default')
-				? 'VICE Memory'
-				: `VICE Memory (${key.slice(key.lastIndexOf(':') + 1)})`;
+				? 'Memory'
+				: `Memory (${key.slice(key.lastIndexOf(':') + 1)})`;
 			panel = new MemoryPanel(services, title, options?.startAddress);
 			this._panels.set(key, panel);
 		}

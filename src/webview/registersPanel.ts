@@ -67,6 +67,8 @@ export class RegistersPanel extends ViceWebviewPanel {
 		#regTable td { padding-right: 5px; }
 		/* Extra gap between the left and right register columns. */
 		#regTable td:nth-child(3) { padding-left: 30px; }
+		/* Render all labels in cyan. */
+		#regTable td:first-child, #regTable td:nth-child(3) { color: #00FFFF; }
 	</style>
 	<table id="regTable"></table>`;
 		const script = `
