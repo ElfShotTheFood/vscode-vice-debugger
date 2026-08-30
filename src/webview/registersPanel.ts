@@ -97,9 +97,25 @@ export class RegistersPanel extends ViceWebviewPanel {
 	function makeRegisterCell(row) {
 		var td = document.createElement('td');
 		var input = document.createElement('input');
+		var digits = Math.ceil(row.size / 4);
 		input.value = hex(row.value, row.size);
-		input.size = 6;
+		input.size = digits + 1;
+		input.maxLength = digits;
 		input.disabled = running;
+		// Overstrike mode: a printable character replaces the character under
+		// the cursor instead of being inserted. Non-hex characters are ignored.
+		input.addEventListener('keydown', function (e) {
+			if (e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey) { return; }
+			if (!/^[0-9a-fA-F]$/.test(e.key)) { e.preventDefault(); return; }
+			var start = input.selectionStart;
+			var end = input.selectionEnd;
+			if (start !== null && start === end && start < input.value.length) {
+				e.preventDefault();
+				var v = input.value.substring(0, start) + e.key.toUpperCase() + input.value.substring(start + 1);
+				input.value = v;
+				input.setSelectionRange(start + 1, start + 1);
+			}
+		});
 		input.addEventListener('keydown', function (e) {
 			if (e.key === 'Enter') { commit(input, row); }
 		});
