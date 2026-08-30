@@ -20,6 +20,7 @@
         "onDebugDynamicConfigurations:vice",
         "onCommand:extension.vice-debugger.createLaunchJson",
         "onCommand:extension.vice-debugger.showRegisters",
+        "onCommand:extension.vice-debugger.showDisassembly",
         "onCommand:extension.vice-debugger.showMemory",
         "onCommand:extension.vice-debugger.newMemoryWindow"
     ],
@@ -47,6 +48,11 @@
                 "category": "VICE Debugger"
             },
             {
+                "command": "extension.vice-debugger.showDisassembly",
+                "title": "Show Disassembly Window",
+                "category": "VICE Debugger"
+            },
+            {
                 "command": "extension.vice-debugger.showMemory",
                 "title": "Show Memory Window",
                 "category": "VICE Debugger"
@@ -58,20 +64,7 @@
             }
         ],
         "menus": {
-            "commandPalette": [
-                {
-                    "command": "extension.vice-debugger.showRegisters",
-                    "when": "inDebugMode"
-                },
-                {
-                    "command": "extension.vice-debugger.showMemory",
-                    "when": "inDebugMode"
-                },
-                {
-                    "command": "extension.vice-debugger.newMemoryWindow",
-                    "when": "inDebugMode"
-                }
-            ]
+            "commandPalette": []
         },
         "breakpoints": [
             {

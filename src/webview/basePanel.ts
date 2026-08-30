@@ -137,6 +137,9 @@ export abstract class ViceWebviewPanel {
 		.muted { color: var(--vscode-descriptionForeground); }
 		.error { color: var(--vscode-errorForeground); white-space: pre-wrap; }
 		.banner { margin-bottom: 8px; }
+		/* Match how the editor highlights the current line. */
+		.current td { background: var(--vscode-editor-lineHighlightBackground); }
+		.current td:first-child { border-left: 2px solid var(--vscode-focusBorder); }
 	</style>
 </head>
 <body>

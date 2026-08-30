@@ -3,6 +3,7 @@ import { IViceDebuggerServices } from './sessionRegistry';
 import { ViceWebviewPanel } from './webview/basePanel';
 import { RegistersPanel } from './webview/registersPanel';
 import { MemoryPanel } from './webview/memoryPanel';
+import { DisassemblyPanel } from './webview/disassemblyPanel';
 
 const MAX_MEMORY_PANELS_PER_SESSION = 8;
 
@@ -24,6 +25,16 @@ export class VicePanelManager {
 		let panel = this._panels.get(key);
 		if (!panel) {
 			panel = new RegistersPanel(services);
+			this._panels.set(key, panel);
+		}
+		panel.reveal();
+	}
+
+	public showDisassembly(sessionId: string, services: IViceDebuggerServices): void {
+		const key = `${sessionId}:disassembly`;
+		let panel = this._panels.get(key);
+		if (!panel) {
+			panel = new DisassemblyPanel(services);
 			this._panels.set(key, panel);
 		}
 		panel.reveal();
