@@ -93,7 +93,11 @@ export class MemoryPanel extends ViceWebviewPanel {
 		<label>Address: <input id="addrInput" size="4" maxLength="4"></label>
 		<label style="margin-left:16px">Bytes per row: <input id="bytesInput" size="2" maxLength="2" value="16"></label>
 	</div>
-	<table id="memTable" style="margin-top: 8px; line-height: 2.1;"></table>`;
+	<table id="memTable" style="margin-top: 8px; line-height: 1.6;"></table>
+	<style>
+		/* Labels (Address, Bytes per row) and hex addresses render in cyan. */
+		div label, #memTable td:first-child { color: #00FFFF; }
+	</style>`;
 		const script = `
 	var vscodeApi = acquireVsCodeApi();
 	var running = false;
@@ -161,8 +165,24 @@ export class MemoryPanel extends ViceWebviewPanel {
 		var input = document.createElement('input');
 		input.value = hexByte(current);
 		input.size = 2;
-		span.textContent = '';
-		span.appendChild(input);
+		// Overlay the input on the byte without affecting layout: the table
+		// cell becomes the positioning context and the input is stretched to
+		// exactly the cell's current size, so no bytes shift.
+		var td = span.parentElement;
+		td.style.position = 'relative';
+		span.style.visibility = 'hidden';
+		input.style.position = 'absolute';
+		// Anchor the input flush with the cell's content start (the cell's left
+		// padding is 0; the input's 1px border with border-box is offset by
+		// -1px) so the typed hex digits land exactly on the original glyphs.
+		input.style.left = '-1px';
+		input.style.top = '0';
+		input.style.width = 'calc(100% + 12px)';
+		input.style.height = '100%';
+		input.style.boxSizing = 'border-box';
+		input.style.padding = '0';
+		input.style.textAlign = 'left';
+		td.appendChild(input);
 		input.focus();
 		input.select();
 
@@ -170,6 +190,7 @@ export class MemoryPanel extends ViceWebviewPanel {
 		input.addEventListener('keydown', function (e) {
 			if (e.key === 'Enter') {
 				var value = parseInt(input.value.trim(), 16);
+				input.blur(); // terminate editing immediately
 				if (!isNaN(value) && value >= 0 && value <= 0xff) {
 					post('setByte', { address: address, value: value });
 				} else { done(); }
@@ -181,7 +202,10 @@ export class MemoryPanel extends ViceWebviewPanel {
 	// Overstrike typing for the address box: printable hex characters replace
 	// the character under the cursor; anything else is ignored.
 	document.getElementById('addrInput').addEventListener('keydown', function (e) {
-		if (e.key === 'Enter') { post('navigate', { address: document.getElementById('addrInput').value }); }
+		if (e.key === 'Enter') {
+			document.getElementById('addrInput').blur(); // terminate editing
+			post('navigate', { address: document.getElementById('addrInput').value });
+		}
 		else if (e.key === 'Escape') {
 			// Restore the address the window is currently showing.
 			document.getElementById('addrInput').value = hexAddr(currentStart);
@@ -201,7 +225,10 @@ export class MemoryPanel extends ViceWebviewPanel {
 	var bytesPerLineValue = 16;
 	// Overstrike + decimal-only input for the bytes-per-row box.
 	document.getElementById('bytesInput').addEventListener('keydown', function (e) {
-		if (e.key === 'Enter') { post('setBytesPerLine', { count: this.value }); }
+		if (e.key === 'Enter') {
+			this.blur(); // terminate editing immediately
+			post('setBytesPerLine', { count: this.value });
+		}
 		else if (e.key === 'Escape') {
 			this.value = bytesPerLineValue.toString(10);
 			this.blur();
