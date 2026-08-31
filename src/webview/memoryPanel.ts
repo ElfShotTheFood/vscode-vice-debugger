@@ -149,17 +149,17 @@ export class MemoryPanel extends ViceWebviewPanel {
 					span.textContent = hexByte(byte);
 					span.title = hexAddr(address);
 					span.style.cursor = running ? 'default' : 'pointer';
-					span.addEventListener('click', function (addr, current) {
+					span.addEventListener('click', function (addr, current, target) {
 						return function () {
 							if (running) { return; }
-							new InPlaceEditBox(span, {
+							new InPlaceEditBox(target, {
 								width: 2,
 								valueKind: EDIT_VALUE_KIND.HEX,
 								onCommit: function (v) { post('setByte', { address: addr, value: v }); },
 								onCancel: function () { post('refresh'); }
 							}).begin(current);
 						};
-					}(address, byte));
+					}(address, byte, span));
 					td.appendChild(span);
 				}
 				tr.appendChild(td);

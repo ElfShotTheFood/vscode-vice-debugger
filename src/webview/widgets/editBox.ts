@@ -181,6 +181,9 @@ class EditBox extends EditBoxBase {
 		if (e.key === 'Enter') {
 			e.preventDefault();
 			var v = this._parse(this._text());
+			// Enter terminates the edit: end editing and leave the field
+			// whether the value is accepted or discarded.
+			this._el.blur();
 			if (this._isValid(v)) {
 				this._value = v;
 				if (this._opts.onCommit) { this._opts.onCommit(v); }
