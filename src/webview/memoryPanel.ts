@@ -97,6 +97,9 @@ export class MemoryPanel extends ViceWebviewPanel {
 	<style>
 		/* Labels (Address, Bytes per row) and hex addresses render in cyan. */
 		div label, #memTable td:first-child { color: #00FFFF; }
+		/* Suppress the browser focus rectangle on the byte editor spans;
+		   the blinking block cursor is the focus indicator. */
+		#memTable span:focus { outline: none; }
 	</style>`;
 		const script = `
 	var vscodeApi = acquireVsCodeApi();
@@ -162,41 +165,116 @@ export class MemoryPanel extends ViceWebviewPanel {
 
 	function editByte(span, address, current) {
 		if (running) { return; }
-		var input = document.createElement('input');
-		input.value = hexByte(current);
-		input.size = 2;
-		// Overlay the input on the byte without affecting layout: the table
-		// cell becomes the positioning context and the input is stretched to
-		// exactly the cell's current size, so no bytes shift.
-		var td = span.parentElement;
-		td.style.position = 'relative';
-		span.style.visibility = 'hidden';
-		input.style.position = 'absolute';
-		// Anchor the input flush with the cell's content start (the cell's left
-		// padding is 0; the input's 1px border with border-box is offset by
-		// -1px) so the typed hex digits land exactly on the original glyphs.
-		input.style.left = '-1px';
-		input.style.top = '0';
-		input.style.width = 'calc(100% + 12px)';
-		input.style.height = '100%';
-		input.style.boxSizing = 'border-box';
-		input.style.padding = '0';
-		input.style.textAlign = 'left';
-		td.appendChild(input);
-		input.focus();
-		input.select();
 
-		function done() { post('refresh'); }
-		input.addEventListener('keydown', function (e) {
+		// Character-based edit control using the byte's own span: the display
+		// element itself becomes the editor, so the digits occupy exactly the
+		// same pixels before, during, and after editing (same element, font,
+		// and layout — nothing is overlaid or repositioned).  The cursor is a
+		// blinking block: the digit under the cursor is inverted.
+		var original = hexByte(current);
+		var digits = [original.charAt(0), original.charAt(1)];
+		var cursor = 0;
+		var blinkTimer = null;
+		var blinkOn = true;
+
+		function stopBlink() {
+			if (blinkTimer !== null) { clearInterval(blinkTimer); blinkTimer = null; }
+		}
+
+		function renderText() {
+			span.textContent = digits[0] + digits[1];
+		}
+
+		// Re-render the two characters, inverting (block cursor) the digit
+		// currently under the cursor.  Called on every blink tick.
+		function renderCursor() {
+			var charSpans = [];
+			for (var i = 0; i < 2; i++) {
+				var c = document.createElement('span');
+				c.textContent = digits[i];
+				if (i === cursor && blinkOn) {
+					c.style.background = 'var(--vscode-editor-foreground)';
+					c.style.color = 'var(--vscode-editor-background)';
+				}
+				charSpans.push(c);
+			}
+			span.innerHTML = '';
+			span.appendChild(charSpans[0]);
+			span.appendChild(charSpans[1]);
+		}
+
+		function startEditing() {
+			blinkOn = true;
+			renderCursor();
+			blinkTimer = setInterval(function () {
+				blinkOn = !blinkOn;
+				renderCursor();
+			}, 350); // 50% faster than the original 530ms
+		}
+
+		function finish(redraw) {
+			stopBlink();
+			span.removeEventListener('keydown', onKey);
+			span.removeEventListener('blur', onBlur);
+			span.tabIndex = 0;
+			renderText();
+			if (redraw) { post('refresh'); }
+		}
+
+		function onKey(e) {
 			if (e.key === 'Enter') {
-				var value = parseInt(input.value.trim(), 16);
-				input.blur(); // terminate editing immediately
+				e.preventDefault();
+				var value = parseInt(digits.join(''), 16);
+				stopBlink();
+				span.removeEventListener('keydown', onKey);
+				span.removeEventListener('blur', onBlur);
 				if (!isNaN(value) && value >= 0 && value <= 0xff) {
+					// Show the committed value immediately, then refresh.
+					span.textContent = value.toString(16).toUpperCase().padStart(2, '0');
 					post('setByte', { address: address, value: value });
-				} else { done(); }
-			} else if (e.key === 'Escape') { done(); }
-		});
-		input.addEventListener('blur', done);
+				} else { finish(true); }
+			} else if (e.key === 'Escape') {
+				e.preventDefault();
+				finish(true);
+			} else if (e.key === 'ArrowLeft') {
+				e.preventDefault();
+				blinkOn = true;
+				cursor = Math.max(0, cursor - 1);
+				renderCursor();
+			} else if (e.key === 'ArrowRight') {
+				e.preventDefault();
+				blinkOn = true;
+				cursor = Math.min(1, cursor + 1);
+				renderCursor();
+			} else if (e.key === 'Home') {
+				e.preventDefault();
+				blinkOn = true;
+				cursor = 0;
+				renderCursor();
+			} else if (e.key === 'End') {
+				e.preventDefault();
+				blinkOn = true;
+				cursor = 1;
+				renderCursor();
+			} else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+				if (!/^[0-9a-fA-F]$/.test(e.key)) { e.preventDefault(); return; }
+				e.preventDefault();
+				digits[cursor] = e.key.toUpperCase();
+				blinkOn = true;
+				cursor = Math.min(1, cursor + 1);
+				renderCursor();
+			}
+		}
+
+		function onBlur() {
+			finish(true);
+		}
+
+		span.addEventListener('keydown', onKey);
+		span.addEventListener('blur', onBlur);
+		span.tabIndex = 0;
+		span.focus();
+		startEditing();
 	}
 
 	// Overstrike typing for the address box: printable hex characters replace
