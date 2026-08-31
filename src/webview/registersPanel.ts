@@ -79,11 +79,6 @@ export class RegistersPanel extends ViceWebviewPanel {
 
 	function post(type, payload) { vscodeApi.postMessage({ type: type, payload: payload }); }
 
-	function hex(value, size) {
-		var digits = Math.ceil(size / 4);
-		return (value >>> 0).toString(16).toUpperCase().padStart(digits, '0');
-	}
-
 	function setBanner(text, isError) {
 		var banner = document.getElementById('banner');
 		banner.textContent = text;
@@ -108,33 +103,19 @@ export class RegistersPanel extends ViceWebviewPanel {
 		var td = document.createElement('td');
 		var input = document.createElement('input');
 		var digits = Math.ceil(row.size / 4);
-		input.value = hex(row.value, row.size);
 		input.size = digits + 1;
-		input.maxLength = digits;
 		input.disabled = running;
-		// Overstrike mode: a printable character replaces the character under
-		// the cursor instead of being inserted. Non-hex characters are ignored.
-		input.addEventListener('keydown', function (e) {
-			if (e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey) { return; }
-			if (!/^[0-9a-fA-F]$/.test(e.key)) { e.preventDefault(); return; }
-			var start = input.selectionStart;
-			var end = input.selectionEnd;
-			if (start !== null && start === end && start < input.value.length) {
-				e.preventDefault();
-				var v = input.value.substring(0, start) + e.key.toUpperCase() + input.value.substring(start + 1);
-				input.value = v;
-				input.setSelectionRange(start + 1, start + 1);
-			}
+		// Shared EditBox widget: hex-only overstrike typing, Enter commits,
+		// Escape restores the register's original value.
+		var mask = Math.pow(2, row.size) - 1;
+		var editBox = new EditBox(input, {
+			width: digits,
+			valueKind: EDIT_VALUE_KIND.HEX,
+			overstrike: true,
+			validator: function (v) { return v >= 0 && v <= mask; },
+			onCommit: function (v) { post('setRegister', { name: row.name, value: v }); }
 		});
-		input.addEventListener('keydown', function (e) {
-			if (e.key === 'Enter') { commit(input, row); }
-			else if (e.key === 'Escape') {
-				// Discard edits and restore the register's original value.
-				input.value = hex(row.value, row.size);
-				input.blur();
-			}
-		});
-		input.addEventListener('blur', function () { input.value = hex(row.value, row.size); });
+		editBox.setValue(row.value);
 		td.appendChild(input);
 		return td;
 	}
@@ -144,29 +125,22 @@ export class RegistersPanel extends ViceWebviewPanel {
 		var label = document.createElement('td');
 		label.textContent = flagName;
 		var input = document.createElement('input');
-		var flagValue = function () { return (flagsRow.value & (1 << bit)) !== 0 ? '1' : '0'; };
-		input.value = flagValue();
 		input.size = 1;
-		input.maxLength = 1;
 		input.disabled = running;
-		// Accept only 0 or 1; the typed digit replaces the existing one.
-		input.addEventListener('keydown', function (e) {
-			if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-				if (e.key !== '0' && e.key !== '1') { e.preventDefault(); return; }
-				e.preventDefault();
-				input.value = e.key;
-				input.setSelectionRange(1, 1);
+		var flagValue = function () { return (flagsRow.value & (1 << bit)) !== 0 ? 1 : 0; };
+		var editBox = new EditBox(input, {
+			width: 1,
+			valueKind: EDIT_VALUE_KIND.BINARY,
+			overstrike: false,
+			replaceWholeOnType: true,
+			onCommit: function (v) {
+				var newValue = v === 1
+					? (flagsRow.value | (1 << bit))
+					: (flagsRow.value & ~(1 << bit));
+				post('setRegister', { name: flagsRow.name, value: newValue & 0xff });
 			}
 		});
-		input.addEventListener('keydown', function (e) {
-			if (e.key === 'Enter') { commitFlag(input, flagsRow, bit); }
-			else if (e.key === 'Escape') {
-				// Discard edits and restore the flag's original value.
-				input.value = flagValue();
-				input.blur();
-			}
-		});
-		input.addEventListener('blur', function () { input.value = flagValue(); });
+		editBox.setValue(flagValue());
 		td.appendChild(input);
 		return { labelTd: label, valueTd: td };
 	}
@@ -232,18 +206,6 @@ export class RegistersPanel extends ViceWebviewPanel {
 		}
 		var mask = (1 << row.size) - 1;
 		post('setRegister', { name: row.name, value: value & mask });
-	}
-
-	function commitFlag(input, flagsRow, bit) {
-		var digit = input.value.trim();
-		if (digit !== '0' && digit !== '1') {
-			input.value = (flagsRow.value & (1 << bit)) !== 0 ? '1' : '0';
-			return;
-		}
-		var newValue = digit === '1'
-			? (flagsRow.value | (1 << bit))
-			: (flagsRow.value & ~(1 << bit));
-		post('setRegister', { name: flagsRow.name, value: newValue & 0xff });
 	}
 
 	window.addEventListener('message', function (event) {

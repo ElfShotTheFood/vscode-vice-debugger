@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { IViceDebuggerServices } from '../sessionRegistry';
+import { EDIT_BOX_SCRIPT } from './widgets/editBox';
 
 /**
  * Common base for all VICE debugger webview panels.
@@ -146,6 +147,7 @@ export abstract class ViceWebviewPanel {
 	<div class="banner" id="banner"></div>
 	${body}
 	<script nonce="${nonce}">
+	${EDIT_BOX_SCRIPT}
 	${script}
 	</script>
 </body>
