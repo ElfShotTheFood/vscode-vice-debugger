@@ -180,9 +180,23 @@ class EditBox extends EditBoxBase {
 			self._updateCursor();
 		};
 		this._onCaretMove = function () { self._updateCursor(); };
+		this._onMouseDown = function (e) {
+			// Place the caret on the clicked digit immediately (on mouse
+			// down) so the block cursor starts blinking on the right digit
+			// without waiting for mouse-up, where the browser normally puts
+			// the caret.  The browser's own placement then lands on the same
+			// digit, so nothing jumps.
+			var rect = self._el.getBoundingClientRect();
+			var s = getComputedStyle(self._el);
+			var x = e.clientX - rect.left - (parseFloat(s.borderLeftWidth) || 0);
+			var index = Math.max(0, Math.min(self._opts.width - 1, Math.floor(x / self._charWidth)));
+			self._el.setSelectionRange(index, index);
+			self._updateCursor();
+		};
 		input.addEventListener('keydown', this._onKeyDown);
 		input.addEventListener('blur', this._onBlur);
 		input.addEventListener('focus', this._onFocus);
+		input.addEventListener('mousedown', this._onMouseDown);
 		// Track caret movement so the block cursor follows it.
 		var caretEvents = ['input', 'keyup', 'click', 'select'];
 		for (var i = 0; i < caretEvents.length; i++) {
@@ -255,6 +269,7 @@ class EditBox extends EditBoxBase {
 		this._el.removeEventListener('keydown', this._onKeyDown);
 		this._el.removeEventListener('blur', this._onBlur);
 		this._el.removeEventListener('focus', this._onFocus);
+		this._el.removeEventListener('mousedown', this._onMouseDown);
 		var caretEvents = ['input', 'keyup', 'click', 'select'];
 		for (var i = 0; i < caretEvents.length; i++) {
 			this._el.removeEventListener(caretEvents[i], this._onCaretMove);
