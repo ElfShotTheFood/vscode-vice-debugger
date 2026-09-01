@@ -30,7 +30,7 @@ export class DisassemblyPanel extends ViceWebviewPanel {
 	private _manualAddress = 0x0800;
 
 	public constructor(services: IViceDebuggerServices) {
-		super(services, DisassemblyPanel.VIEW_TYPE, 'VICE Disassembly');
+		super(services, DisassemblyPanel.VIEW_TYPE, 'Disassembly');
 	}
 
 	protected async refresh(): Promise<void> {
@@ -81,10 +81,13 @@ export class DisassemblyPanel extends ViceWebviewPanel {
 		if (type === 'refresh') {
 			void this.refresh();
 		} else if (type === 'setMode') {
-			// { useCurrentPc: boolean, address?: string }
+			// { useCurrentPc: boolean, address?: number|string }
 			this._useCurrentPc = payload?.useCurrentPc !== false;
 			if (!this._useCurrentPc && payload?.address !== undefined) {
-				const address = this._parseNumber(String(payload.address));
+				// The edit box commits a numeric value; accept numbers
+				// directly and only parse raw strings as hex.
+				const raw = payload.address;
+				const address = typeof raw === 'number' ? raw : this._parseNumber(String(raw));
 				if (address !== null && address >= 0 && address <= 0xffff) {
 					this._manualAddress = address;
 				}
@@ -103,15 +106,32 @@ export class DisassemblyPanel extends ViceWebviewPanel {
 	}
 	protected _getHtml(_webview: vscode.Webview): string {
 		const body = `
-	<div>
-		<label><input type="checkbox" id="usePc" checked> Use current PC</label>
-		<label style="margin-left:16px">Address: <input id="addrInput" size="8" disabled>
-		<button id="goBtn" disabled>Go</button></label>
+	<style>
+		/* The document itself never scrolls: the toolbar is a fixed flex row
+		   and only the instruction area scrolls, so the controls cannot move
+		   at all while scrolling. */
+		html, body { height: 100%; }
+		body { overflow: hidden; box-sizing: border-box; display: flex; flex-direction: column; }
+		.disToolbar { flex: 0 0 auto; padding-bottom: 8px; }
+		.disRow { margin-bottom: 4px; }
+		.disScroll { flex: 1 1 auto; overflow-y: auto; }
+	</style>
+	<div class="disToolbar">
+		<div class="disRow">
+			<label><input type="radio" name="disMode" id="modePc" value="pc" checked> Current PC</label>
+		</div>
+		<div class="disRow">
+			<label><input type="radio" name="disMode" id="modeAddr" value="addr"> Address</label>
+			<input id="addrInput" size="4" maxLength="4" style="margin-left:12px">
+		</div>
 	</div>
-	<table id="disTable"></table>`;
+	<div class="disScroll">
+		<table id="disTable"></table>
+	</div>`;
 		const script = `
 	var vscodeApi = acquireVsCodeApi();
 	var running = false;
+	var usePc = true;
 
 	function post(type, payload) { vscodeApi.postMessage({ type: type, payload: payload }); }
 
@@ -121,14 +141,26 @@ export class DisassemblyPanel extends ViceWebviewPanel {
 		var banner = document.getElementById('banner');
 		banner.textContent = text;
 		banner.className = isError ? 'error' : 'muted';
+		banner.style.display = text ? '' : 'none';
 	}
 
+	// The 4-digit address edit box uses the shared EditBox widget (same look
+	// and behavior as the Registers and Memory windows).
+	var addrEditBox = new EditBox(document.getElementById('addrInput'), {
+		width: 4,
+		valueKind: EDIT_VALUE_KIND.HEX,
+		overstrike: true,
+		onCommit: function (v) { post('setMode', { useCurrentPc: false, address: v }); }
+	});
+
 	function setModeControls(usePc, address) {
-		document.getElementById('usePc').checked = usePc;
-		document.getElementById('addrInput').disabled = usePc || running;
-		document.getElementById('goBtn').disabled = usePc || running;
+		usePc = usePc !== false;
+		document.getElementById('modePc').checked = usePc;
+		document.getElementById('modeAddr').checked = !usePc;
+		var input = document.getElementById('addrInput');
+		input.disabled = usePc || running;
 		if (!usePc && typeof address === 'number') {
-			document.getElementById('addrInput').value = hexAddr(address);
+			addrEditBox.setValue(address);
 		}
 	}
 
@@ -161,14 +193,21 @@ export class DisassemblyPanel extends ViceWebviewPanel {
 		}
 	}
 
-	document.getElementById('usePc').addEventListener('change', function () {
-		post('setMode', { useCurrentPc: this.checked, address: document.getElementById('addrInput').value });
+	document.getElementById('modePc').addEventListener('change', function () {
+		if (this.checked) {
+			usePc = true;
+			document.getElementById('addrInput').disabled = true;
+			post('setMode', { useCurrentPc: true });
+		}
 	});
-	document.getElementById('goBtn').addEventListener('click', function () {
-		post('setMode', { useCurrentPc: false, address: document.getElementById('addrInput').value });
-	});
-	document.getElementById('addrInput').addEventListener('keydown', function (e) {
-		if (e.key === 'Enter') { post('setMode', { useCurrentPc: false, address: this.value }); }
+	document.getElementById('modeAddr').addEventListener('change', function () {
+		if (this.checked) {
+			usePc = false;
+			document.getElementById('addrInput').disabled = running;
+			// Seed the edit box with the last-known start so Enter alone
+			// re-issues the same region.
+			post('setMode', { useCurrentPc: false, address: addrEditBox.getValue() !== null ? addrEditBox.getValue() : 0 });
+		}
 	});
 
 	window.addEventListener('message', function (event) {
@@ -176,9 +215,8 @@ export class DisassemblyPanel extends ViceWebviewPanel {
 		if (msg.type === 'disassembly') { render(msg.payload); }
 		else if (msg.type === 'state') {
 			running = !!msg.payload.running;
-			setBanner(msg.payload.connected
-				? (running ? 'Target running - waiting for next stop.' : 'Highlighted line contains the current PC.')
-				: 'Not connected to the VICE monitor.', false);
+			setBanner(msg.payload.connected ? '' : 'Not connected to the VICE monitor.', false);
+			setModeControls(usePc, null);
 		}
 		else if (msg.type === 'error') { setBanner('Error: ' + msg.payload.message, true); }
 	});
