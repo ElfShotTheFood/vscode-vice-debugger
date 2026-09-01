@@ -149,15 +149,19 @@ export class MemoryPanel extends ViceWebviewPanel {
 					span.textContent = hexByte(byte);
 					span.title = hexAddr(address);
 					span.style.cursor = running ? 'default' : 'pointer';
-					span.addEventListener('click', function (addr, current, target) {
-						return function () {
+					span.addEventListener('mousedown', function (addr, current, target) {
+						return function (e) {
 							if (running) { return; }
+							// Start editing on mouse down, with the cursor on
+							// the digit that was clicked (each digit cell is
+							// half the span's width).
+							var rect = target.getBoundingClientRect();
+							var index = Math.max(0, Math.min(1, Math.floor((e.clientX - rect.left) / (rect.width / 2))));
 							new InPlaceEditBox(target, {
 								width: 2,
 								valueKind: EDIT_VALUE_KIND.HEX,
-								onCommit: function (v) { post('setByte', { address: addr, value: v }); },
-								onCancel: function () { post('refresh'); }
-							}).begin(current);
+								onCommit: function (v) { post('setByte', { address: addr, value: v }); }
+							}).begin(current, index);
 						};
 					}(address, byte, span));
 					td.appendChild(span);

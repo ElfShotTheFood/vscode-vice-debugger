@@ -152,6 +152,23 @@ export abstract class ViceWebviewPanel {
 			z-index: 1000;
 		}
 		@keyframes viceblinkcursor { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+		/* Inline (in-place) block cursor: same blink rate as the overlay, but
+		   it must alternate the digit's colors (inverted <-> normal) instead
+		   of opacity — the digit only exists inside this span, so fading it
+		   out would show a blank cell. */
+		.vice-inline-cursor {
+			animation: viceinlineblink 700ms step-end infinite;
+		}
+		@keyframes viceinlineblink {
+			0%, 49% {
+				background: var(--vscode-editor-foreground);
+				color: var(--vscode-editor-background);
+			}
+			50%, 100% {
+				background: transparent;
+				color: inherit;
+			}
+		}
 	</style>
 </head>
 <body>

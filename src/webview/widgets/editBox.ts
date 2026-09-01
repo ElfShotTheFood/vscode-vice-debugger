@@ -358,21 +358,22 @@ class EditBox extends EditBoxBase {
 // Editor that takes over an existing display element (span) and edits it in
 // place, so the digits occupy exactly the same pixels before, during, and
 // after editing (same element, font, and layout).  The cursor is a blinking
-// block: the digit under the cursor is inverted.  Enter commits; Escape or
-// blur cancels (restore the display, then invoke onCancel).
+// block: the digit under the cursor is inverted, using the same CSS blink
+// animation and rate as EditBox.  begin() accepts an optional starting
+// cursor index so editing can start on the digit that was clicked.  Enter
+// commits; Escape or blur cancels (restore the original display, then
+// invoke onCancel).
 class InPlaceEditBox extends EditBoxBase {
 	constructor(span, options) {
 		super(options);
 		this._el = span;
 		this._digits = [];
 		this._cursor = 0;
-		this._blinkOn = true;
-		this._blinkTimer = null;
 	}
-	begin(initialValue) {
+	begin(initialValue, caretIndex) {
 		this._value = initialValue;
 		this._digits = this._format(initialValue).split('');
-		this._cursor = 0;
+		this._cursor = Math.max(0, Math.min(caretIndex || 0, this._digits.length - 1));
 		var self = this;
 		this._onKeyDown = function (e) { self._handleKey(e); };
 		this._onBlur = function () { self._cancel(); };
@@ -381,10 +382,6 @@ class InPlaceEditBox extends EditBoxBase {
 		this._el.tabIndex = 0;
 		this._el.focus();
 		this._renderCursor();
-		this._blinkTimer = setInterval(function () {
-			self._blinkOn = !self._blinkOn;
-			self._renderCursor();
-		}, this._opts.blinkRate);
 	}
 	_text() { return this._digits.join(''); }
 	_setValueText(t) { this._digits = t.split(''); this._renderText(); }
@@ -394,23 +391,23 @@ class InPlaceEditBox extends EditBoxBase {
 		for (var i = 0; i < this._digits.length; i++) {
 			var c = document.createElement('span');
 			c.textContent = this._digits[i];
-			if (i === this._cursor && this._blinkOn) {
-				c.style.background = 'var(--vscode-editor-foreground)';
-				c.style.color = 'var(--vscode-editor-background)';
+			if (i === this._cursor) {
+				c.className = 'vice-inline-cursor';
+				c.style.animationDuration = (this._opts.blinkRate * 2) + 'ms';
 			}
 			this._el.appendChild(c);
 		}
 	}
-	_stopBlink() {
-		if (this._blinkTimer !== null) { clearInterval(this._blinkTimer); this._blinkTimer = null; }
-	}
 	_detach() {
-		this._stopBlink();
 		this._el.removeEventListener('keydown', this._onKeyDown);
 		this._el.removeEventListener('blur', this._onBlur);
 	}
 	_cancel() {
 		this._detach();
+		// Restore the original display (edits are discarded); onCancel may
+		// additionally sync with the debug session.  It must not rebuild the
+		// DOM around the element a subsequent click is targeting.
+		this._digits = this._format(this._value).split('');
 		this._renderText();
 		if (this._opts.onCancel) { this._opts.onCancel(); }
 	}
@@ -431,28 +428,23 @@ class InPlaceEditBox extends EditBoxBase {
 			this._cancel();
 		} else if (e.key === 'ArrowLeft') {
 			e.preventDefault();
-			this._blinkOn = true;
 			this._cursor = Math.max(0, this._cursor - 1);
 			this._renderCursor();
 		} else if (e.key === 'ArrowRight') {
 			e.preventDefault();
-			this._blinkOn = true;
 			this._cursor = Math.min(this._digits.length - 1, this._cursor + 1);
 			this._renderCursor();
 		} else if (e.key === 'Home') {
 			e.preventDefault();
-			this._blinkOn = true;
 			this._cursor = 0;
 			this._renderCursor();
 		} else if (e.key === 'End') {
 			e.preventDefault();
-			this._blinkOn = true;
 			this._cursor = this._digits.length - 1;
 			this._renderCursor();
 		} else if (this._canAcceptKey(e)) {
 			e.preventDefault();
 			this._digits[this._cursor] = e.key.toUpperCase();
-			this._blinkOn = true;
 			this._cursor = Math.min(this._digits.length - 1, this._cursor + 1);
 			this._renderCursor();
 		} else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
