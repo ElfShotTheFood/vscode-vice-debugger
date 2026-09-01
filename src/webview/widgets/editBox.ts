@@ -39,7 +39,7 @@ var KIND_PARSERS = {
 		var t = String(text).trim();
 		if (t.charAt(0) === '$') { t = t.slice(1); }
 		else if (/^0x/i.test(t)) { t = t.slice(2); }
-		if (!/^[0-9a-f]+$/.test(t)) { return NaN; }
+		if (!/^[0-9a-fA-F]+$/.test(t)) { return NaN; }
 		return parseInt(t, 16);
 	},
 	decimal: function (text) {
@@ -66,6 +66,63 @@ var KIND_FORMATTERS = {
 };
 
 var DEFAULT_BLINK_RATE = 350; // ms per blink phase
+
+// All live input-based EditBox instances in this webview, plus the one-time
+// installation of a document-level mouse-down handler that makes clicking
+// outside any edit box equivalent to hitting ESC: the active editor is
+// cancelled (edits discarded, original value restored) before focus moves.
+// A click that lands inside an edit box is left alone, so that box simply
+// receives focus and starts editing.
+var _viceEditBoxes = [];
+var _viceOutsideClickInstalled = false;
+function _viceEnsureOutsideClickCancel() {
+	if (_viceOutsideClickInstalled) { return; }
+	_viceOutsideClickInstalled = true;
+	document.addEventListener('mousedown', function (e) {
+		// Prune widgets whose inputs were removed from the DOM (e.g. by a
+		// panel re-render) so the registry does not grow unbounded.
+		_viceEditBoxes = _viceEditBoxes.filter(function (box) {
+			return document.body.contains(box._el);
+		});
+		// Is the click inside any edit box (or an in-place span editor)?
+		var node = e.target;
+		while (node) {
+			if (node === document.body) { break; }
+			if ((node.tagName === 'INPUT' && node.type === 'text') ||
+				(node.classList && node.classList.contains('vice-block-cursor'))) {
+				return; // click within an edit box: let it start editing
+			}
+			node = node.parentNode;
+		}
+		// Click outside any edit box: cancel every active editor (ESC).
+		_viceEditBoxes.forEach(function (box) {
+			if (box._hasFocus) { box.cancel(); }
+		});
+	});
+}
+
+// Text-extent measurement (the DOM equivalent of GetTextExtent): measure the
+// rendered width of a character with the same font the element uses, via a
+// canvas 2D context.  The editor font is monospace, so one '0' gives the
+// per-character cell width used to size edit boxes and place block cursors.
+var _viceMeasureCanvas = null;
+function measureTextExtent(text, fontStyle) {
+	if (!_viceMeasureCanvas) { _viceMeasureCanvas = document.createElement('canvas'); }
+	var ctx = _viceMeasureCanvas.getContext('2d');
+	ctx.font = fontStyle;
+	return ctx.measureText(text).width;
+}
+
+function computedFontStyle() {
+	// Measure with the document's font (the body resolves the editor font
+	// CSS variables).  Computed styles on *detached* elements (inputs not
+	// yet added to the table) fall back to browser defaults, so measuring
+	// the element itself gives wrong extents during widget construction.
+	var s = getComputedStyle(document.body);
+	var size = s.fontSize || '13px';
+	var family = s.fontFamily || 'monospace';
+	return size + ' ' + family;
+}
 
 // Base class: shared options, parse/format/validate, and the commit/cancel
 // protocol.  width is in hex digits (2 = byte, 4 = word/address).  valueKind
@@ -102,8 +159,11 @@ class EditBoxBase {
 	restore() { this._setValueText(this._format(this._value)); }
 }
 
-// Editor for real <input> elements (native caret).  Enter commits,
-// Escape restores the original value and blurs, blur restores.
+// Editor for real <input> elements.  The input is sized to the exact text
+// extent of the rendered font (charWidth * width, zero padding), and the
+// native caret is replaced by a blinking block cursor overlay that inverts
+// the digit under it.  Enter commits and ends the edit; Escape restores the
+// original value and blurs; blur restores.
 class EditBox extends EditBoxBase {
 	constructor(input, options) {
 		super(options);
@@ -111,16 +171,94 @@ class EditBox extends EditBoxBase {
 		input.maxLength = this._opts.width;
 		var self = this;
 		this._onKeyDown = function (e) { self._handleKey(e); };
-		this._onBlur = function () { self.restore(); };
+		this._onBlur = function () { self._hasFocus = false; self._updateCursor(); self.restore(); };
+		this._onFocus = function () {
+			self._hasFocus = true;
+			self._layout();
+			// Editing starts at the digit that was clicked: leave the
+			// browser's caret placement alone.
+			self._updateCursor();
+		};
+		this._onCaretMove = function () { self._updateCursor(); };
 		input.addEventListener('keydown', this._onKeyDown);
 		input.addEventListener('blur', this._onBlur);
+		input.addEventListener('focus', this._onFocus);
+		// Track caret movement so the block cursor follows it.
+		var caretEvents = ['input', 'keyup', 'click', 'select'];
+		for (var i = 0; i < caretEvents.length; i++) {
+			input.addEventListener(caretEvents[i], this._onCaretMove);
+		}
+		_viceEditBoxes.push(this);
+		_viceEnsureOutsideClickCancel();
+		this._layout();
+	}
+	// End the edit without committing: discard changes, restore the original
+	// value, and leave the field.  Equivalent to pressing Escape.
+	cancel() {
+		this._hasFocus = false;
+		this.restore();
+		this._updateCursor();
+		if (document.activeElement === this._el) { this._el.blur(); }
+	}
+	_layout() {
+		// Size the bounding rectangle to the exact text extent of the font
+		// actually used to render the input.  Zero padding anchors the text
+		// at the left edge, so digit cell N starts at N * charWidth.
+		this._charWidth = measureTextExtent('0', computedFontStyle());
+		this._el.style.width = (this._charWidth * this._opts.width) + 'px';
+		this._el.style.paddingLeft = '0px';
+		this._el.style.paddingRight = '0px';
+		this._el.style.textAlign = 'left';
+		// The native bar caret is replaced by the block-cursor overlay.
+		this._el.style.caretColor = 'transparent';
+	}
+	_ensureCursorEl() {
+		// The cursor overlay lives on document.body and is positioned with
+		// getBoundingClientRect().  It must NOT be inserted around the
+		// input: re-parenting a focused element makes the browser silently
+		// drop focus (no blur event), which left stale blinking cursors and
+		// dead inputs after a single click.
+		if (!this._cursorEl) {
+			this._cursorEl = document.createElement('span');
+			this._cursorEl.className = 'vice-block-cursor';
+			this._cursorEl.style.animationDuration = (this._opts.blinkRate * 2) + 'ms';
+		}
+		if (!this._cursorEl.parentNode) { document.body.appendChild(this._cursorEl); }
+	}
+	_updateCursor() {
+		if (!this._hasFocus || this._el.disabled || !document.body.contains(this._el)) {
+			if (this._cursorEl) { this._cursorEl.style.display = 'none'; }
+			return;
+		}
+		this._ensureCursorEl();
+		var value = this._el.value;
+		var caret = this._el.selectionStart === null ? 0 : this._el.selectionStart;
+		var index = value.length > 0
+			? Math.max(0, Math.min(caret, value.length - 1))
+			: 0;
+		var rect = this._el.getBoundingClientRect();
+		var s = getComputedStyle(this._el);
+		var left = rect.left + (parseFloat(s.borderLeftWidth) || 0);
+		var top = rect.top + (parseFloat(s.borderTopWidth) || 0);
+		this._cursorEl.style.display = '';
+		this._cursorEl.style.left = (left + index * this._charWidth) + 'px';
+		this._cursorEl.style.top = top + 'px';
+		this._cursorEl.style.width = this._charWidth + 'px';
+		this._cursorEl.style.height = this._el.clientHeight + 'px';
 	}
 	_text() { return this._el.value; }
-	_setValueText(t) { this._el.value = t; }
-	setEnabled(enabled) { this._el.disabled = !enabled; }
+	_setValueText(t) { this._el.value = t; this._updateCursor(); }
+	setEnabled(enabled) { this._el.disabled = !enabled; this._updateCursor(); }
 	dispose() {
+		var index = _viceEditBoxes.indexOf(this);
+		if (index >= 0) { _viceEditBoxes.splice(index, 1); }
 		this._el.removeEventListener('keydown', this._onKeyDown);
 		this._el.removeEventListener('blur', this._onBlur);
+		this._el.removeEventListener('focus', this._onFocus);
+		var caretEvents = ['input', 'keyup', 'click', 'select'];
+		for (var i = 0; i < caretEvents.length; i++) {
+			this._el.removeEventListener(caretEvents[i], this._onCaretMove);
+		}
 	}
 	_replaceUnderCaret(e) {
 		if (this._opts.replaceWholeOnType) {
@@ -159,10 +297,10 @@ class EditBox extends EditBoxBase {
 			this._el.value = value + key;
 			this._el.setSelectionRange(this._el.value.length, this._el.value.length);
 		} else {
-			// Caret at the end of a full field: wrap to the first character
-			// (as the VICE monitor does).
-			this._el.value = key + value.substring(1);
-			this._el.setSelectionRange(1, 1);
+			// Caret at the end of a full field: overwrite the last digit and
+			// keep the cursor there (no wrap-around).
+			this._el.value = value.substring(0, value.length - 1) + key;
+			this._el.setSelectionRange(this._el.value.length, this._el.value.length);
 		}
 	}
 	_insertAtCaret(e) {

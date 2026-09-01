@@ -141,6 +141,17 @@ export abstract class ViceWebviewPanel {
 		/* Match how the editor highlights the current line. */
 		.current td { background: var(--vscode-editor-lineHighlightBackground); }
 		.current td:first-child { border-left: 2px solid var(--vscode-focusBorder); }
+		/* Edit-box block cursor: a fixed-position overlay on document.body
+		   that inverts the digit under it (never re-parents the input). */
+		.vice-block-cursor {
+			position: fixed;
+			pointer-events: none;
+			background: var(--vscode-editor-foreground);
+			mix-blend-mode: difference;
+			animation: viceblinkcursor 700ms step-end infinite;
+			z-index: 1000;
+		}
+		@keyframes viceblinkcursor { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
 	</style>
 </head>
 <body>
