@@ -28,6 +28,12 @@ export interface IViceDebuggerServices {
 	getMemory(startAddr: number, endAddr: number): Promise<Buffer>;
 	setMemory(address: number, data: Buffer): Promise<void>;
 
+	/** Reason for the most recent stop ('breakpoint', 'step', 'entry', 'exception', ...). */
+	getLastStopReason(): string;
+
+	/** Write a line to the debug console (diagnostics from webview panels). */
+	logOutput(text: string): void;
+
 	/** Subscribe to debugger lifecycle events ('stopped', 'resumed', ...). */
 	onDebuggerEvent(listener: (event: DebuggerEvent, payload: any) => void): IDisposable;
 }

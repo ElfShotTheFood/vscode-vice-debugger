@@ -58,6 +58,7 @@ export class ViceDebugSession extends LoggingDebugSession {
 	private _currentSource: { path: string; line: number } | null = null;
 	private _nextBreakpointId = 1;
 	private _debuggerEvents = new EventEmitter();
+	private _lastStopReason = '';
 
 	public constructor() {
 		super('vice-debug.txt');
@@ -105,6 +106,7 @@ export class ViceDebugSession extends LoggingDebugSession {
 				const reason = this._waitingForEntry ? 'entry' : (this._stepRequestPending ? 'step' : 'breakpoint');
 				this._waitingForEntry = false;
 				this._stepRequestPending = false;
+				this._lastStopReason = reason;
 				this._emitDebuggerEvent('stopped', { pc: this._currentPc });
 				this.sendEvent(new StoppedEvent(reason, ViceDebugSession.THREAD_ID));
 			});
@@ -125,6 +127,7 @@ export class ViceDebugSession extends LoggingDebugSession {
 				'console'
 			));
 			this._emitDebuggerEvent('stopped', { pc: address });
+			this._lastStopReason = 'breakpoint';
 
 			// DAP's hitBreakpointIds tells VS Code which breakpoint caused the
 			// stop. Use the VICE checkpoint ID as the stable ID for this internal
@@ -151,6 +154,7 @@ export class ViceDebugSession extends LoggingDebugSession {
 			this._currentPc = pc;
 			const pcHex = `$${pc.toString(16).padStart(4, '0').toUpperCase()}`;
 			this.sendEvent(new OutputEvent(`[VICE Debugger] CPU JAMMED at PC=${pcHex}\n`, 'stderr'));
+			this._lastStopReason = 'exception';
 			this._emitDebuggerEvent('jam', { pc });
 			this.sendEvent(new StoppedEvent('exception', ViceDebugSession.THREAD_ID));
 		});
@@ -575,6 +579,14 @@ export class ViceDebugSession extends LoggingDebugSession {
 
 	public async setMemory(address: number, data: Buffer): Promise<void> {
 		await this._monitor.setMemory(address, data);
+	}
+
+	public getLastStopReason(): string {
+		return this._lastStopReason;
+	}
+
+	public logOutput(text: string): void {
+		this.sendEvent(new OutputEvent(text.endsWith('\n') ? text : text + '\n', 'console'));
 	}
 
 	public onDebuggerEvent(listener: (event: DebuggerEvent, payload: any) => void): IDisposable {
