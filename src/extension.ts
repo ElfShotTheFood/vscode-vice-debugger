@@ -72,6 +72,13 @@ export function activate(context: vscode.ExtensionContext) {
 		});
 	}));
 
+	context.subscriptions.push(vscode.commands.registerCommand('extension.vice-debugger.showScreen', () => {
+		withActiveSession(sessionId => {
+			const services = getDebuggerServices(sessionId)!;
+			panelManager.showScreen(sessionId, services);
+		});
+	}));
+
 	context.subscriptions.push(vscode.commands.registerCommand('extension.vice-debugger.showDisassembly', () => {
 		withActiveSession(sessionId => {
 			const services = getDebuggerServices(sessionId)!;

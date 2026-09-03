@@ -20,6 +20,7 @@
         "onDebugDynamicConfigurations:vice",
         "onCommand:extension.vice-debugger.createLaunchJson",
         "onCommand:extension.vice-debugger.showRegisters",
+        "onCommand:extension.vice-debugger.showScreen",
         "onCommand:extension.vice-debugger.showDisassembly",
         "onCommand:extension.vice-debugger.showMemory",
         "onCommand:extension.vice-debugger.newMemoryWindow"
@@ -45,6 +46,11 @@
             {
                 "command": "extension.vice-debugger.showRegisters",
                 "title": "Show Registers Window",
+                "category": "VICE Debugger"
+            },
+            {
+                "command": "extension.vice-debugger.showScreen",
+                "title": "Show Screen Window",
                 "category": "VICE Debugger"
             },
             {
